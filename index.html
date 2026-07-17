@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CRM Comercial — Lorena Marangon Mantovani</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root {
     --navy: #15253F;
@@ -163,6 +164,33 @@
     header.topbar { padding: 12px 14px; }
     input.search { min-width: 140px; flex: 1; }
   }
+
+  /* ---------- exportação ---------- */
+  .export-wrap { position: relative; }
+  .export-menu {
+    position: absolute; top: 110%; right: 0; background: white; border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); z-index: 30; min-width: 200px; overflow: hidden;
+  }
+  .export-menu button {
+    display: block; width: 100%; text-align: left; padding: 11px 16px; background: none; border: none;
+    font-family: var(--font); font-size: 13px; color: var(--text-dark); cursor: pointer; border-bottom: 1px solid var(--border);
+  }
+  .export-menu button:last-child { border-bottom: none; }
+  .export-menu button:hover { background: var(--gold-light); }
+
+  #printArea { display: none; }
+  @media print {
+    body * { visibility: hidden; }
+    #printArea, #printArea * { visibility: visible; }
+    #printArea { display: block; position: absolute; top: 0; left: 0; width: 100%; }
+    .print-header { background: var(--navy) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; color: white; padding: 16px 20px; }
+    .print-header h1 { margin: 0; font-size: 18px; }
+    .print-header .sub { color: var(--gold) !important; -webkit-print-color-adjust: exact; font-size: 11px; margin-top: 2px; }
+    .print-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 10px; }
+    .print-table th { background: var(--navy) !important; -webkit-print-color-adjust: exact; color: white !important; text-align: left; padding: 6px 8px; }
+    .print-table td { padding: 6px 8px; border-bottom: 1px solid #ddd; }
+    .print-stage-title { background: var(--gold-light) !important; -webkit-print-color-adjust: exact; color: var(--navy); font-weight: bold; padding: 8px 10px; margin-top: 16px; font-size: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -320,6 +348,13 @@ function renderAppShell() {
       </div>
       <input class="search" id="searchInput" type="text" placeholder="Buscar por nome, telefone, banco ou problema...">
       <span class="user-pill">👤 ${escapeHtml(session.user.email)}</span>
+      <div class="export-wrap">
+        <button class="btn btn-outline" id="btnExport">⬇ Exportar</button>
+        <div class="export-menu" id="exportMenu" style="display:none;">
+          <button id="btnExportExcel">📊 Exportar para Excel</button>
+          <button id="btnExportPdf">📄 Exportar para PDF</button>
+        </div>
+      </div>
       <button class="btn btn-outline" id="btnLogout">Sair</button>
       <button class="btn btn-gold" id="btnNewLead">+ Novo lead</button>
     </header>
@@ -327,10 +362,21 @@ function renderAppShell() {
     <div class="board-wrap"><div class="board" id="board"></div></div>
     <div class="note">Dados salvos na nuvem (Supabase) e compartilhados com toda a equipe do escritório em tempo real.</div>
     <div id="modalRoot"></div>
+    <div id="printArea"></div>
   `;
   document.getElementById('btnLogout').addEventListener('click', doLogout);
   document.getElementById('btnNewLead').addEventListener('click', () => openModal(null));
   document.getElementById('searchInput').addEventListener('input', renderBoard);
+  document.getElementById('btnExport').addEventListener('click', () => {
+    const menu = document.getElementById('exportMenu');
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  });
+  document.addEventListener('click', (e) => {
+    const wrap = document.querySelector('.export-wrap');
+    if (wrap && !wrap.contains(e.target)) document.getElementById('exportMenu').style.display = 'none';
+  });
+  document.getElementById('btnExportExcel').addEventListener('click', exportToExcel);
+  document.getElementById('btnExportPdf').addEventListener('click', exportToPdf);
 }
 
 function subscribeRealtime() {
@@ -357,6 +403,7 @@ function fromRow(row) {
     faixaRenda: row.faixa_renda || '', tipoProblema: row.tipo_problema || PROBLEMAS[0],
     banco: row.banco || '', valorAproximado: row.valor_aproximado || '', stage: row.stage || STAGES[0],
     docs: row.docs || [], tags: row.tags || [], observacoes: row.observacoes || '',
+    outroDescricao: row.outro_descricao || '', outroProblema: row.outro_problema || '', outroReu: row.outro_reu || '',
     criadoPor: row.criado_por || '', dataCriacao: row.data_criacao, ultimaAtualizacao: row.ultima_atualizacao,
   };
 }
@@ -366,6 +413,7 @@ function toRow(lead) {
     canal_origem: lead.canalOrigem, tipo_beneficio: lead.tipoBeneficio, faixa_renda: lead.faixaRenda,
     tipo_problema: lead.tipoProblema, banco: lead.banco, valor_aproximado: lead.valorAproximado,
     stage: lead.stage, docs: lead.docs, tags: lead.tags, observacoes: lead.observacoes,
+    outro_descricao: lead.outroDescricao || '', outro_problema: lead.outroProblema || '', outro_reu: lead.outroReu || '',
     criado_por: lead.criadoPor, ultima_atualizacao: new Date().toISOString(),
   };
 }
@@ -402,6 +450,14 @@ function renderKpis() {
   el.innerHTML = kpis.map(([label, num]) => `<div class="kpi"><div class="num">${num}</div><div class="label">${label}</div></div>`).join('');
 }
 
+function getFilteredLeads() {
+  const query = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+  return leads.filter(l => {
+    if (!query) return true;
+    return [l.nome, l.telefone, l.banco, l.tipoProblema].filter(Boolean).some(v => v.toLowerCase().includes(query));
+  });
+}
+
 /* ---------- board ---------- */
 function renderBoard() {
   const board = document.getElementById('board');
@@ -418,11 +474,7 @@ function renderBoard() {
     return;
   }
 
-  const query = (document.getElementById('searchInput').value || '').toLowerCase().trim();
-  const filtered = leads.filter(l => {
-    if (!query) return true;
-    return [l.nome, l.telefone, l.banco, l.tipoProblema].filter(Boolean).some(v => v.toLowerCase().includes(query));
-  });
+  const filtered = getFilteredLeads();
 
   board.innerHTML = STAGES.map(stage => {
     const cardsInStage = filtered.filter(l => l.stage === stage);
@@ -440,10 +492,11 @@ function renderBoard() {
 function cardHtml(lead) {
   const tagsHtml = (lead.tags || []).map(t => `<span class="tag ${t.startsWith('urgente') ? 'urgent' : ''}">#${escapeHtml(t)}</span>`).join('');
   const stageOptions = STAGES.map(s => `<option value="${escapeHtml(s)}" ${s === lead.stage ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
+  const problemaLabel = (lead.tipoProblema === 'Outro' && lead.outroDescricao) ? `Outro: ${lead.outroDescricao}` : (lead.tipoProblema || '—');
   return `
     <div class="card" draggable="true" data-id="${lead.id}">
       <div class="name">${escapeHtml(lead.nome || '(sem nome)')}</div>
-      <div class="meta">${escapeHtml(lead.tipoProblema || '—')}</div>
+      <div class="meta">${escapeHtml(problemaLabel)}</div>
       <div class="meta">${escapeHtml(lead.banco || '')} ${lead.banco ? '·' : ''} ${daysAgo(lead.ultimaAtualizacao)}</div>
       <div class="tags">${tagsHtml}</div>
       <select class="card-stage-select" data-id="${lead.id}">${stageOptions}</select>
@@ -488,6 +541,7 @@ function emptyLead() {
     id: null, nome: '', telefone: '', cidadeUf: '', canalOrigem: CANAIS[0],
     tipoBeneficio: BENEFICIOS[0], faixaRenda: '', tipoProblema: PROBLEMAS[0],
     banco: '', valorAproximado: '', stage: STAGES[0], docs: [], tags: [],
+    outroDescricao: '', outroProblema: '', outroReu: '',
     observacoes: '', criadoPor: '', dataCriacao: new Date().toISOString(), ultimaAtualizacao: new Date().toISOString(),
   };
 }
@@ -515,6 +569,23 @@ function openModal(id) {
             <div class="form-row"><label>Faixa de renda (R$)</label><input id="f_faixaRenda" value="${escapeHtml(lead.faixaRenda)}" placeholder="Ex.: 1.500"></div>
             <div class="form-row"><label>Tipo de problema</label><select id="f_tipoProblema">${PROBLEMAS.map(c => `<option ${c===lead.tipoProblema?'selected':''}>${c}</option>`).join('')}</select></div>
             <div class="form-row"><label>Banco/instituição envolvida</label><input id="f_banco" value="${escapeHtml(lead.banco)}" placeholder="Nome do banco"></div>
+            <div class="form-row full" id="outroWrap" style="display:${lead.tipoProblema === 'Outro' ? 'block' : 'none'};">
+              <div style="background: var(--gold-light); border-radius: 8px; padding: 12px 14px; margin-bottom: 4px;">
+                <label style="margin-bottom:8px;">Caso excepcional — fora de Direito Bancário</label>
+                <div class="form-row">
+                  <label>Do que se trata o processo (área/tipo de ação)</label>
+                  <input id="f_outroDescricao" value="${escapeHtml(lead.outroDescricao || '')}" placeholder="Ex.: Ação trabalhista, inventário, divórcio...">
+                </div>
+                <div class="form-row">
+                  <label>Qual é o problema</label>
+                  <textarea id="f_outroProblema" placeholder="Descreva a situação do cliente">${escapeHtml(lead.outroProblema || '')}</textarea>
+                </div>
+                <div class="form-row" style="margin-bottom:0;">
+                  <label>Nome do réu (parte contrária)</label>
+                  <input id="f_outroReu" value="${escapeHtml(lead.outroReu || '')}" placeholder="Nome da pessoa ou empresa">
+                </div>
+              </div>
+            </div>
             <div class="form-row"><label>Valor aproximado do prejuízo (R$)</label><input id="f_valorAproximado" value="${escapeHtml(lead.valorAproximado)}" placeholder="Ex.: 3.000"></div>
             <div class="form-row"><label>Etapa do funil</label><select id="f_stage">${STAGES.map(s => `<option ${s===lead.stage?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select></div>
             <div class="form-row full"><label>Documentos recebidos</label><div class="checklist" id="f_docs">${DOCS.map(d => `<span class="chip-check ${lead.docs && lead.docs.includes(d) ? 'active' : ''}" data-doc="${escapeHtml(d)}">${d}</span>`).join('')}</div></div>
@@ -535,6 +606,9 @@ function openModal(id) {
 
   const selectedDocs = new Set(lead.docs || []);
   const selectedTags = new Set(lead.tags || []);
+  document.getElementById('f_tipoProblema').addEventListener('change', (e) => {
+    document.getElementById('outroWrap').style.display = e.target.value === 'Outro' ? 'block' : 'none';
+  });
   document.querySelectorAll('#f_docs .chip-check').forEach(chip => chip.addEventListener('click', () => {
     const d = chip.dataset.doc;
     if (selectedDocs.has(d)) { selectedDocs.delete(d); chip.classList.remove('active'); } else { selectedDocs.add(d); chip.classList.add('active'); }
@@ -567,6 +641,9 @@ function openModal(id) {
     lead.faixaRenda = document.getElementById('f_faixaRenda').value.trim();
     lead.tipoProblema = document.getElementById('f_tipoProblema').value;
     lead.banco = document.getElementById('f_banco').value.trim();
+    lead.outroDescricao = lead.tipoProblema === 'Outro' ? document.getElementById('f_outroDescricao').value.trim() : '';
+    lead.outroProblema = lead.tipoProblema === 'Outro' ? document.getElementById('f_outroProblema').value.trim() : '';
+    lead.outroReu = lead.tipoProblema === 'Outro' ? document.getElementById('f_outroReu').value.trim() : '';
     lead.valorAproximado = document.getElementById('f_valorAproximado').value.trim();
     lead.stage = document.getElementById('f_stage').value;
     lead.docs = Array.from(selectedDocs);
@@ -580,6 +657,64 @@ function openModal(id) {
     renderBoard();
     renderKpis();
   });
+}
+
+/* ---------- exportação ---------- */
+function exportToExcel() {
+  document.getElementById('exportMenu').style.display = 'none';
+  const rows = getFilteredLeads().map(l => ({
+    'Nome': l.nome, 'Telefone': l.telefone, 'Cidade/UF': l.cidadeUf,
+    'Canal de origem': l.canalOrigem, 'Tipo de benefício': l.tipoBeneficio, 'Faixa de renda': l.faixaRenda,
+    'Tipo de problema': l.tipoProblema, 'Banco': l.banco, 'Valor aproximado': l.valorAproximado,
+    'Outro — descrição do processo': l.outroDescricao || '', 'Outro — problema': l.outroProblema || '', 'Outro — réu': l.outroReu || '',
+    'Etapa': l.stage, 'Documentos': (l.docs || []).join(', '), 'Tags': (l.tags || []).join(', '),
+    'Observações': l.observacoes, 'Cadastrado por': l.criadoPor,
+    'Data de criação': l.dataCriacao ? new Date(l.dataCriacao).toLocaleDateString('pt-BR') : '',
+    'Última atualização': l.ultimaAtualizacao ? new Date(l.ultimaAtualizacao).toLocaleDateString('pt-BR') : '',
+  }));
+  if (rows.length === 0) { alert('Não há leads para exportar.'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = Object.keys(rows[0]).map(() => ({ wch: 22 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Leads');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `leads-crm-${dateStr}.xlsx`);
+}
+
+function exportToPdf() {
+  document.getElementById('exportMenu').style.display = 'none';
+  const filtered = getFilteredLeads();
+  if (filtered.length === 0) { alert('Não há leads para exportar.'); return; }
+
+  const today = new Date().toLocaleDateString('pt-BR');
+  let html = `
+    <div class="print-header">
+      <h1>CRM Comercial — Relatório de Leads</h1>
+      <div class="sub">Lorena Marangon Mantovani — Advocacia &amp; Consultoria Jurídica · Gerado em ${today}</div>
+    </div>`;
+
+  STAGES.forEach(stage => {
+    const stageLeads = filtered.filter(l => l.stage === stage);
+    if (stageLeads.length === 0) return;
+    html += `<div class="print-stage-title">${escapeHtml(stage)} (${stageLeads.length})</div>`;
+    html += `<table class="print-table"><thead><tr>
+      <th>Nome</th><th>Telefone</th><th>Tipo de problema</th><th>Banco</th><th>Tags</th><th>Atualizado</th>
+    </tr></thead><tbody>`;
+    stageLeads.forEach(l => {
+      html += `<tr>
+        <td>${escapeHtml(l.nome)}</td>
+        <td>${escapeHtml(l.telefone)}</td>
+        <td>${escapeHtml(l.tipoProblema)}</td>
+        <td>${escapeHtml(l.banco)}</td>
+        <td>${(l.tags || []).map(t => '#' + escapeHtml(t)).join(' ')}</td>
+        <td>${l.ultimaAtualizacao ? new Date(l.ultimaAtualizacao).toLocaleDateString('pt-BR') : ''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  });
+
+  document.getElementById('printArea').innerHTML = html;
+  window.print();
 }
 
 /* ---------- inicialização ---------- */
