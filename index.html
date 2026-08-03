@@ -375,6 +375,7 @@ function renderAppShell() {
     <div class="note">Dados salvos na nuvem (Supabase) e compartilhados com toda a equipe do escritório em tempo real.</div>
     <div id="modalRoot"></div>
     <div id="printArea"></div>
+    <div id="docPreviewRoot"></div>
   `;
   document.getElementById('btnLogout').addEventListener('click', doLogout);
   document.getElementById('btnNewLead').addEventListener('click', () => openModal(null));
@@ -442,17 +443,17 @@ async function insertLead(lead) {
   const row = toRow(lead);
   row.criado_por = session.user.email;
   const { data, error } = await sb.from('leads').insert(row).select().single();
-  if (error) { alert('Não foi possível salvar. Tente novamente.'); console.error(error); return null; }
+  if (error) { alert('Não foi possível salvar.\n\nErro técnico (envie este print para o suporte):\n' + (error.message || JSON.stringify(error))); console.error(error); return null; }
   return fromRow(data);
 }
 async function updateLead(lead) {
   const { error } = await sb.from('leads').update(toRow(lead)).eq('id', lead.id);
-  if (error) { alert('Não foi possível salvar. Tente novamente.'); console.error(error); return false; }
+  if (error) { alert('Não foi possível salvar.\n\nErro técnico (envie este print para o suporte):\n' + (error.message || JSON.stringify(error))); console.error(error); return false; }
   return true;
 }
 async function deleteLeadRow(id) {
   const { error } = await sb.from('leads').delete().eq('id', id);
-  if (error) { alert('Não foi possível excluir. Tente novamente.'); console.error(error); return false; }
+  if (error) { alert('Não foi possível excluir.\n\nErro técnico:\n' + (error.message || JSON.stringify(error))); console.error(error); return false; }
   return true;
 }
 
@@ -757,18 +758,20 @@ function readFormIntoLead(baseLead) {
 
 function docWrapper(bodyHtml) {
   return `
-    <div style="font-family: Calibri, Arial, sans-serif; color:#1A1A1A; padding: 10px 30px;">
-      <div style="text-align:center; margin-bottom: 24px;">
-        <div style="font-weight:bold; color:var(--navy); font-size:16px;">LORENA MARANGON MANTOVANI</div>
-        <div style="font-size:11px; color:var(--gold);">Advocacia &amp; Consultoria Jurídica</div>
+    <div style="font-family: Calibri, Arial, sans-serif; color:#1A1A1A;">
+      <div style="text-align:center; padding: 14px 0 10px;">
+        <img src="data:image/png;base64,${LOGO_B64}" alt="" style="width:64px; height:64px; border-radius:50%;">
       </div>
-      ${bodyHtml}
+      <div style="height:4px; background:#C5A483; margin-bottom:22px;"></div>
+      <div style="padding: 0 34px 24px;">
+        ${bodyHtml}
+      </div>
     </div>`;
 }
 
-function pTitle(text) { return `<div style="text-align:center; font-weight:bold; font-size:14px; color:var(--navy); margin: 0 0 20px;">${escapeHtml(text)}</div>`; }
+function pTitle(text) { return `<div style="text-align:center; font-weight:bold; font-size:14px; color:#15253F; margin: 0 0 20px;">${escapeHtml(text)}</div>`; }
 function pJust(text) { return `<p style="text-align:justify; text-indent:40px; line-height:1.6; font-size:12.5px; margin: 0 0 12px;">${text}</p>`; }
-function pClause(text) { return `<p style="font-weight:bold; color:var(--navy); font-size:12.5px; margin: 18px 0 8px;">${escapeHtml(text)}</p>`; }
+function pClause(text) { return `<p style="font-weight:bold; color:#15253F; font-size:12.5px; margin: 18px 0 8px;">${escapeHtml(text)}</p>`; }
 function pSignature(label) {
   return `<div style="text-align:center; margin-top:50px;">
     <div style="border-top:1px solid #333; width:320px; margin: 0 auto;"></div>
@@ -784,6 +787,61 @@ function checarDadosMinimos(lead, campos) {
     return false;
   }
   return true;
+}
+
+function downloadAsWord(contentHtml, filename) {
+  const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>${filename}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->
+<style>body{font-family:Calibri, Arial, sans-serif;} @page{margin:2.5cm;}</style>
+</head><body>${contentHtml}</body></html>`;
+  const blob = new Blob(['\ufeff', wordHtml], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.replace(/[\\/:*?"<>|]/g, '') + '.doc';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function showDocPreview(tituloDoc, contentHtml, lead) {
+  const root = document.getElementById('docPreviewRoot');
+  const nomeArquivo = tituloDoc + (lead && lead.nome ? ' - ' + lead.nome : '');
+  root.innerHTML = `
+    <div class="overlay" id="docPreviewOverlay">
+      <div class="modal" style="max-width: 760px;">
+        <div class="modal-header">
+          <h2>${escapeHtml(tituloDoc)} — revise antes de baixar</h2>
+          <button class="close-x" id="docPreviewClose">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:65vh; background:#f0eee9;">
+          <div id="docPreviewContent" style="background:white; border:1px solid var(--border); border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+            ${contentHtml}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div class="left" style="font-size:11px; color:#9a9488; max-width:220px;">Revise o conteúdo acima. Se precisar corrigir algo, feche e ajuste os dados do lead.</div>
+          <div class="right">
+            <button class="btn btn-ghost" id="docPreviewWord">💾 Baixar em Word (.doc)</button>
+            <button class="btn btn-gold" id="docPreviewPrint">🖨️ Imprimir / Salvar PDF</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  const closePreview = () => { root.innerHTML = ''; };
+  document.getElementById('docPreviewClose').addEventListener('click', closePreview);
+  document.getElementById('docPreviewOverlay').addEventListener('click', (e) => { if (e.target.id === 'docPreviewOverlay') closePreview(); });
+  document.getElementById('docPreviewWord').addEventListener('click', () => downloadAsWord(contentHtml, nomeArquivo));
+  document.getElementById('docPreviewPrint').addEventListener('click', () => {
+    const tituloOriginal = document.title;
+    document.title = nomeArquivo;
+    document.getElementById('printArea').innerHTML = contentHtml;
+    window.print();
+    setTimeout(() => { document.title = tituloOriginal; }, 1000);
+  });
 }
 
 function gerarDocumento(tipo, lead) {
@@ -882,8 +940,8 @@ function gerarDocumento(tipo, lead) {
     `);
   }
 
-  document.getElementById('printArea').innerHTML = html;
-  window.print();
+  const tituloDoc = { procuracao: 'Procuração', hipossuficiencia: 'Declaração de Hipossuficiência', contrato: 'Contrato de Honorários' }[tipo] || 'Documento';
+  showDocPreview(tituloDoc, html, lead);
 }
 
 /* ---------- exportação ---------- */
@@ -941,8 +999,11 @@ function exportToPdf() {
     html += `</tbody></table>`;
   });
 
+  const tituloOriginalPdf = document.title;
+  document.title = 'Relatório de Leads';
   document.getElementById('printArea').innerHTML = html;
   window.print();
+  setTimeout(() => { document.title = tituloOriginalPdf; }, 1000);
 }
 
 /* ---------- inicialização ---------- */
