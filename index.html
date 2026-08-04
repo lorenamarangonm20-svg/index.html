@@ -728,7 +728,7 @@ function openModal(id) {
             <div class="form-row"><label>Estado civil</label><input id="f_estadoCivil" value="${escapeHtml(lead.estadoCivil || '')}" placeholder="Ex.: casado(a), solteiro(a)"></div>
             <div class="form-row"><label>Profissão</label><input id="f_profissao" value="${escapeHtml(lead.profissao || '')}" placeholder="Ex.: aposentado(a)"></div>
             <div class="form-row"><label>E-mail</label><input id="f_email" autocomplete="off" value="${escapeHtml(lead.email || '')}" placeholder="email@exemplo.com"></div>
-            <div class="form-row full"><label>Endereço completo</label><input id="f_enderecoCompleto" autocomplete="off" value="${escapeHtml(lead.enderecoCompleto || '')}" placeholder="Rua, número, bairro, cidade/UF, CEP"></div>
+            <div class="form-row full"><label>Endereço residencial completo</label><input id="f_enderecoCompleto" autocomplete="off" value="${escapeHtml(lead.enderecoCompleto || '')}" placeholder="Rua, número, bairro, cidade/UF, CEP (residência do cliente)"></div>
             <div class="form-row full">
               <label>🔒 Senha do gov.br (informação sensível — só peça após a procuração assinada)</label>
               <div style="display:flex; gap:6px;">
@@ -1086,25 +1086,45 @@ function showDocPreview(tituloDoc, contentHtml, lead) {
 
 function gerarDocumento(tipo, lead) {
   const hoje = 'data da assinatura eletrônica';
-  const qualif = `${escapeHtml(lead.nacionalidade || '[nacionalidade]')}, ${escapeHtml(lead.estadoCivil || '[estado civil]')}, ${escapeHtml(lead.profissao || '[profissão]')}`;
-  const objeto = lead.tipoProblema === 'Outro' && lead.outroDescricao ? lead.outroDescricao : lead.tipoProblema;
+  const cidadeAssinatura = (lead.cidadeUf && lead.cidadeUf.trim()) ? lead.cidadeUf.trim() : ESCRITORIO_CIDADE_UF;
+
+  function ajustarGenero(texto, sexo) {
+    if (!texto) return '';
+    if (sexo === 'Feminino') return texto.replace(/\(a\)/gi, 'a').replace(/\(o\)/gi, '');
+    if (sexo === 'Masculino') return texto.replace(/\(a\)/gi, '').replace(/\(o\)/gi, 'o');
+    return texto;
+  }
   const portadorTxt = lead.sexo === 'Feminino' ? 'portadora' : lead.sexo === 'Masculino' ? 'portador' : 'portador(a)';
   const domiciliadoTxt = lead.sexo === 'Feminino' ? 'domiciliada' : lead.sexo === 'Masculino' ? 'domiciliado' : 'domiciliado(a)';
   const inscritoTxt = lead.sexo === 'Feminino' ? 'inscrita' : lead.sexo === 'Masculino' ? 'inscrito' : 'inscrito(a)';
 
+  // partes de qualificação: só entram no documento se o campo estiver preenchido
+  const partesQualif = [lead.nacionalidade, lead.estadoCivil, lead.profissao]
+    .map(t => ajustarGenero((t || '').trim(), lead.sexo))
+    .filter(Boolean)
+    .map(t => escapeHtml(t));
+
+  const objeto = lead.tipoProblema === 'Outro' && lead.outroDescricao ? lead.outroDescricao : lead.tipoProblema;
+
   let html = '';
 
   if (tipo === 'procuracao') {
-    if (!checarDadosMinimos(lead, [['nome','Nome'],['cpf','CPF'],['rg','RG'],['enderecoCompleto','Endereço completo']])) return;
+    if (!checarDadosMinimos(lead, [['nome','Nome'],['cpf','CPF'],['enderecoCompleto','Endereço completo']])) return;
     html = docWrapper(`
       ${pTitle('P R O C U R A Ç Ã O')}
       ${pJust('Pelo presente instrumento particular de mandato por mim abaixo assinado:')}
-      ${pJust(`<strong>OUTORGANTE: ${escapeHtml(lead.nome).toUpperCase()},</strong> ${qualif}, ${portadorTxt} da cédula de identidade RG ${escapeHtml(lead.rg)}, ${inscritoTxt} no CPF ${escapeHtml(lead.cpf)}, residente e ${domiciliadoTxt} no endereço ${escapeHtml(lead.enderecoCompleto)}.`)}
+      ${(() => {
+        const frag = [...partesQualif];
+        if (lead.rg) frag.push(`${portadorTxt} da cédula de identidade RG ${escapeHtml(lead.rg)}`);
+        frag.push(`${inscritoTxt} no CPF ${escapeHtml(lead.cpf)}`);
+        frag.push(`residente e ${domiciliadoTxt} no endereço ${escapeHtml(lead.enderecoCompleto)}`);
+        return pJust(`<strong>OUTORGANTE: ${escapeHtml(lead.nome).toUpperCase()},</strong> ${frag.join(', ')}.`);
+      })()}
       ${pJust(`<strong>OUTORGADO: LORENA MARANGON MANTOVANI,</strong> brasileira, advogada, inscrita na OAB/${ESCRITORIO_OAB_UF} sob o n° ${ESCRITORIO_OAB}, com endereço eletrônico: ${ESCRITORIO_EMAIL}.`)}
       ${pJust(`OBJETO: Representar o Outorgante, promovendo a defesa dos seus direitos e interesses, podendo, para tanto, propor quaisquer ações, medidas incidentais, acompanhar os processos administrativos e/ou judiciais em qualquer Juízo, Instância, Tribunal, ou Repartição Pública${objeto ? ', especialmente relacionados a ' + escapeHtml(objeto) + (lead.banco ? ' junto a(o) ' + escapeHtml(lead.banco) : '') : ''}.`)}
       ${pJust('PODERES: Por este instrumento particular de procuração, constitui meus bastantes procuradores os outorgados, concedendo-lhe os poderes inerentes da cláusula ad judicia et extra, para o foro em geral, podendo, portanto, promover quaisquer medidas judiciais ou administrativas, assinar termo, oferecer defesa, direta ou indireta, interpor recursos, ajuizar ações e conduzir os respectivos processos, solicitar, providenciar e ter acesso a documentos de qualquer natureza, sendo o presente instrumento de mandato oneroso e contratual podendo substabelecer este a outrem, com ou sem reserva de poderes, dando tudo por bom e valioso, a fim de praticar todos os demais atos necessários ao fiel desempenho deste mandato.')}
       ${pJust('PODERES ESPECÍFICOS: A presente procuração outorga a advogada acima descrita, os poderes especiais para receber citação, confessar, reconhecer a procedência do pedido, transigir, desistir, renunciar ao direito sobre que se funda a ação, firmar compromissos ou acordos, receber valores, dar e receber quitação, levantar ou receber RPV e ALVARÁS, pedir justiça gratuita e assinar a declaração de hipossuficiência econômica, em conformidade com a norma do art. 105 da Lei 13.105/2015.')}
-      <p style="text-align:center; margin-top:24px; font-size:12.5px;">${ESCRITORIO_CIDADE_UF}, ${hoje}</p>
+      <p style="text-align:center; margin-top:24px; font-size:12.5px;">${cidadeAssinatura}, ${hoje}</p>
     `);
   }
 
@@ -1112,8 +1132,14 @@ function gerarDocumento(tipo, lead) {
     if (!checarDadosMinimos(lead, [['nome','Nome'],['cpf','CPF'],['enderecoCompleto','Endereço completo']])) return;
     html = docWrapper(`
       ${pTitle('DECLARAÇÃO DE HIPOSSUFICIÊNCIA')}
-      ${pJust(`Eu, <strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${qualif}, ${portadorTxt} da cédula de identidade RG ${escapeHtml(lead.rg || '[RG]')}, ${inscritoTxt} no CPF sob o nº ${escapeHtml(lead.cpf)}, residente e ${domiciliadoTxt} na ${escapeHtml(lead.enderecoCompleto)}, para os fins específicos dos preceitos contidos no inciso LXXIV, do art. 5° da Constituição Federal, c/c parágrafo único, do art. 98 e seguintes da Lei n° 13.105/2015 e na Lei n° 7.115/83, DECLARO, sob as penas da Lei, que não possuo condições de arcar com as despesas processuais sem prejuízo de meu sustento, motivo pelo qual, venho requerer o deferimento da concessão dos benefícios da <strong>JUSTIÇA GRATUITA</strong>. Requeiro, ainda que o benefício possa abranger os atos do processo em questão.`)}
-      <p style="text-align:center; margin-top:24px; font-size:12.5px;">${ESCRITORIO_CIDADE_UF}, ${hoje}.</p>
+      ${(() => {
+        const frag = [...partesQualif];
+        if (lead.rg) frag.push(`${portadorTxt} da cédula de identidade RG ${escapeHtml(lead.rg)}`);
+        frag.push(`${inscritoTxt} no CPF sob o nº ${escapeHtml(lead.cpf)}`);
+        frag.push(`residente e ${domiciliadoTxt} na ${escapeHtml(lead.enderecoCompleto)}`);
+        return pJust(`Eu, <strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${frag.join(', ')}, para os fins específicos dos preceitos contidos no inciso LXXIV, do art. 5° da Constituição Federal, c/c parágrafo único, do art. 98 e seguintes da Lei n° 13.105/2015 e na Lei n° 7.115/83, DECLARO, sob as penas da Lei, que não possuo condições de arcar com as despesas processuais sem prejuízo de meu sustento, motivo pelo qual, venho requerer o deferimento da concessão dos benefícios da <strong>JUSTIÇA GRATUITA</strong>. Requeiro, ainda que o benefício possa abranger os atos do processo em questão.`);
+      })()}
+      <p style="text-align:center; margin-top:24px; font-size:12.5px;">${cidadeAssinatura}, ${hoje}.</p>
     `);
   }
 
@@ -1127,7 +1153,12 @@ function gerarDocumento(tipo, lead) {
     html = docWrapper(`
       ${pTitle('CONTRATO DE HONORÁRIOS ADVOCATÍCIOS')}
       ${pClause('CONTRATANTE:')}
-      ${pJust(`<strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${qualif}, ${inscritoTxt} no CPF ${escapeHtml(lead.cpf)}, residente e ${domiciliadoTxt} no endereço ${escapeHtml(lead.enderecoCompleto)}.`)}
+      ${(() => {
+        const frag = [...partesQualif];
+        frag.push(`${inscritoTxt} no CPF ${escapeHtml(lead.cpf)}`);
+        frag.push(`residente e ${domiciliadoTxt} no endereço ${escapeHtml(lead.enderecoCompleto)}`);
+        return pJust(`<strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${frag.join(', ')}.`);
+      })()}
       ${pClause('CONTRATADA:')}
       ${pJust(`<strong>LORENA MARANGON MANTOVANI</strong>, brasileira, advogada inscrita na OAB/${ESCRITORIO_OAB_UF} sob o nº ${ESCRITORIO_OAB}, com endereço eletrônico: ${ESCRITORIO_EMAIL}.`)}
       ${pJust('As partes acima identificadas têm, entre si, justo e acertado o presente Contrato de Honorários Advocatícios, que se regerá pelas cláusulas seguintes e pelas condições descritas no presente.')}
@@ -1180,7 +1211,7 @@ function gerarDocumento(tipo, lead) {
 
       ${pClause('DO FORO')}
       ${pJust(`As partes elegem o Foro da cidade de ${ESCRITORIO_CIDADE_UF.split('/')[0]}, para dirimir eventuais dúvidas, disputas ou controvérsias oriundas do presente instrumento, ou à sua infração, extinção ou invalidade. As partes declaram que ambos os lados recebem e assinam suas vias no ato da assinatura deste documento.`)}
-      <p style="text-align:center; margin-top:20px; font-size:12.5px;">${ESCRITORIO_CIDADE_UF}, ${hoje}.</p>
+      <p style="text-align:center; margin-top:20px; font-size:12.5px;">${cidadeAssinatura}, ${hoje}.</p>
     `);
   }
 
@@ -1201,7 +1232,7 @@ function gerarDocumento(tipo, lead) {
         ${pKV('Nacionalidade', lead.nacionalidade)}
         ${pKV('Estado civil', lead.estadoCivil)}
         ${pKV('Profissão', lead.profissao)}
-        ${pKV('Endereço completo', lead.enderecoCompleto)}
+        ${pKV('Endereço residencial completo', lead.enderecoCompleto)}
         ${pKV('Cidade/UF', lead.cidadeUf)}
       </table>
 
