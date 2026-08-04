@@ -420,7 +420,7 @@ function fromRow(row) {
     docs: row.docs || [], tags: row.tags || [], observacoes: row.observacoes || '',
     outroDescricao: row.outro_descricao || '', outroProblema: row.outro_problema || '', outroReu: row.outro_reu || '',
     temParceiro: row.tem_parceiro || 'Não', parceiroNome: row.parceiro_nome || '', parceiroContato: row.parceiro_contato || '', parceiroPercentual: row.parceiro_percentual || '',
-    cpf: row.cpf || '', rg: row.rg || '', nacionalidade: row.nacionalidade || 'brasileira(o)',
+    cpf: row.cpf || '', rg: row.rg || '', nacionalidade: row.nacionalidade || 'brasileira(o)', sexo: row.sexo || '',
     estadoCivil: row.estado_civil || '', profissao: row.profissao || '', enderecoCompleto: row.endereco_completo || '',
     email: row.email || '',
     temHonorariosIniciais: row.tem_honorarios_iniciais || 'Não', valorHonorariosIniciais: row.valor_honorarios_iniciais || '',
@@ -438,7 +438,7 @@ function toRow(lead) {
     stage: lead.stage, docs: lead.docs, tags: lead.tags, observacoes: lead.observacoes,
     outro_descricao: lead.outroDescricao || '', outro_problema: lead.outroProblema || '', outro_reu: lead.outroReu || '',
     tem_parceiro: lead.temParceiro || 'Não', parceiro_nome: lead.parceiroNome || '', parceiro_contato: lead.parceiroContato || '', parceiro_percentual: lead.parceiroPercentual || '',
-    cpf: lead.cpf || '', rg: lead.rg || '', nacionalidade: lead.nacionalidade || '',
+    cpf: lead.cpf || '', rg: lead.rg || '', nacionalidade: lead.nacionalidade || '', sexo: lead.sexo || '',
     estado_civil: lead.estadoCivil || '', profissao: lead.profissao || '', endereco_completo: lead.enderecoCompleto || '',
     email: lead.email || '',
     tem_honorarios_iniciais: lead.temHonorariosIniciais || 'Não', valor_honorarios_iniciais: lead.valorHonorariosIniciais || '',
@@ -541,15 +541,21 @@ function cardHtml(lead) {
       <div class="meta">${escapeHtml(problemaLabel)}</div>
       <div class="meta">${escapeHtml(lead.banco || '')} ${lead.banco ? '·' : ''} ${daysAgo(lead.ultimaAtualizacao)}</div>
       <div class="tags">${followupHtml}${parceiroHtml}${tagsHtml}</div>
-      <select class="card-stage-select" data-id="${lead.id}">${stageOptions}</select>
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <select class="card-stage-select" data-id="${lead.id}" style="flex:1; margin-top:0;">${stageOptions}</select>
+        <button type="button" class="btn-followup-mini" data-id="${lead.id}" title="Follow-up e motivo de não conversão" style="flex-shrink:0; border:1px solid var(--border); background:var(--cream); border-radius:5px; padding:0 8px; cursor:pointer; font-size:13px;">📅</button>
+      </div>
     </div>`;
 }
 
 function attachBoardEvents() {
   document.querySelectorAll('.card').forEach(card => {
-    card.addEventListener('click', (e) => { if (e.target.classList.contains('card-stage-select')) return; openModal(card.dataset.id); });
+    card.addEventListener('click', (e) => { if (e.target.classList.contains('card-stage-select') || e.target.classList.contains('btn-followup-mini')) return; openModal(card.dataset.id); });
     card.addEventListener('dragstart', (e) => { card.classList.add('dragging'); e.dataTransfer.setData('text/plain', card.dataset.id); });
     card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.btn-followup-mini').forEach(btn => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); openFollowupModal(btn.dataset.id); });
   });
   document.querySelectorAll('.card-stage-select').forEach(sel => {
     sel.addEventListener('click', (e) => e.stopPropagation());
@@ -585,12 +591,55 @@ function emptyLead() {
     banco: '', valorAproximado: '', stage: STAGES[0], docs: [], tags: [],
     outroDescricao: '', outroProblema: '', outroReu: '',
     temParceiro: 'Não', parceiroNome: '', parceiroContato: '', parceiroPercentual: '',
-    cpf: '', rg: '', nacionalidade: 'brasileira(o)', estadoCivil: '', profissao: '', enderecoCompleto: '', email: '',
+    cpf: '', rg: '', nacionalidade: 'brasileira(o)', sexo: '', estadoCivil: '', profissao: '', enderecoCompleto: '', email: '',
     temHonorariosIniciais: 'Não', valorHonorariosIniciais: '',
     motivoNaoConversao: '', quemIndicou: '', senhaGov: '', clienteNovoRecorrente: 'Novo',
     proximoFollowup: '', notas: [],
     observacoes: '', criadoPor: '', dataCriacao: new Date().toISOString(), ultimaAtualizacao: new Date().toISOString(),
   };
+}
+
+function openFollowupModal(id) {
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="overlay" id="overlayFollowup">
+      <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+          <h2>📅 Follow-up e Motivo</h2>
+          <button class="close-x" id="closeFollowup">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row"><label>Lead</label><div style="font-weight:700; color:var(--navy); font-size:14px;">${escapeHtml(lead.nome || '(sem nome)')}</div></div>
+          <div class="form-row">
+            <label>Próximo follow-up</label>
+            <input type="date" id="ff_proximoFollowup" value="${escapeHtml(lead.proximoFollowup || '')}">
+          </div>
+          <div class="form-row">
+            <label>Motivo de não conversão (se aplicável)</label>
+            <select id="ff_motivoNaoConversao">${MOTIVOS_NAO_CONVERSAO.map(m => `<option value="${escapeHtml(m)}" ${m===lead.motivoNaoConversao?'selected':''}>${m || '— Selecione —'}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div class="left"></div>
+          <div class="right">
+            <button class="btn btn-ghost" id="cancelFollowup">Cancelar</button>
+            <button class="btn btn-gold" id="saveFollowup">Salvar</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ''; };
+  document.getElementById('closeFollowup').addEventListener('click', close);
+  document.getElementById('cancelFollowup').addEventListener('click', close);
+  document.getElementById('overlayFollowup').addEventListener('click', (e) => { if (e.target.id === 'overlayFollowup') close(); });
+  document.getElementById('saveFollowup').addEventListener('click', async () => {
+    lead.proximoFollowup = document.getElementById('ff_proximoFollowup').value;
+    lead.motivoNaoConversao = document.getElementById('ff_motivoNaoConversao').value;
+    const ok = await updateLead(lead);
+    if (ok) { close(); await loadLeads(); renderBoard(); renderKpis(); }
+  });
 }
 
 function openModal(id) {
@@ -608,8 +657,8 @@ function openModal(id) {
         </div>
         <div class="modal-body">
           <div class="form-grid">
-            <div class="form-row full"><label>Nome completo</label><input id="f_nome" value="${escapeHtml(lead.nome)}" placeholder="Nome do cliente"></div>
-            <div class="form-row"><label>Telefone/WhatsApp</label><input id="f_telefone" value="${escapeHtml(lead.telefone)}" placeholder="(xx) xxxxx-xxxx"></div>
+            <div class="form-row full"><label>Nome completo</label><input id="f_nome" autocomplete="off" value="${escapeHtml(lead.nome)}" placeholder="Nome do cliente"></div>
+            <div class="form-row"><label>Telefone/WhatsApp</label><input id="f_telefone" autocomplete="off" value="${escapeHtml(lead.telefone)}" placeholder="(xx) xxxxx-xxxx"></div>
             <div class="form-row"><label>Cidade/UF</label><input id="f_cidadeUf" value="${escapeHtml(lead.cidadeUf)}" placeholder="Cidade/UF"></div>
             <div class="form-row"><label>Canal de origem</label><select id="f_canalOrigem">${CANAIS.map(c => `<option ${c===lead.canalOrigem?'selected':''}>${c}</option>`).join('')}</select></div>
             <div class="form-row full" id="quemIndicouWrap" style="display:${lead.canalOrigem === 'Indicação' ? 'block' : 'none'};">
@@ -639,8 +688,6 @@ function openModal(id) {
               </div>
             </div>
             <div class="form-row"><label>Valor aproximado do prejuízo (R$)</label><input id="f_valorAproximado" value="${escapeHtml(lead.valorAproximado)}" placeholder="Ex.: 3.000"></div>
-            <div class="form-row"><label>Motivo de não conversão (se aplicável)</label><select id="f_motivoNaoConversao">${MOTIVOS_NAO_CONVERSAO.map(m => `<option value="${escapeHtml(m)}" ${m===lead.motivoNaoConversao?'selected':''}>${m || '— Selecione —'}</option>`).join('')}</select></div>
-            <div class="form-row"><label>Próximo follow-up</label><input type="date" id="f_proximoFollowup" value="${escapeHtml(lead.proximoFollowup || '')}"></div>
             <div class="form-row"><label>Atuação em parceria?</label><select id="f_temParceiro"><option ${lead.temParceiro!=='Sim'?'selected':''}>Não</option><option ${lead.temParceiro==='Sim'?'selected':''}>Sim</option></select></div>
             <div class="form-row full" id="parceiroWrap" style="display:${lead.temParceiro === 'Sim' ? 'block' : 'none'};">
               <div style="background: var(--gold-light); border-radius: 8px; padding: 12px 14px; margin-bottom: 4px;">
@@ -674,17 +721,18 @@ function openModal(id) {
               <label style="font-size:12.5px;">📄 Dados para geração de documentos</label>
               <p style="font-size:11.5px; color:#6b6459; margin: 0 0 10px;">Preencha para poder gerar procuração, declaração de hipossuficiência e contrato de honorários já com os dados do cliente.</p>
             </div>
-            <div class="form-row"><label>CPF</label><input id="f_cpf" value="${escapeHtml(lead.cpf || '')}" placeholder="xxx.xxx.xxx-xx"></div>
-            <div class="form-row"><label>RG</label><input id="f_rg" value="${escapeHtml(lead.rg || '')}" placeholder="Número do RG"></div>
-            <div class="form-row"><label>Nacionalidade</label><input id="f_nacionalidade" value="${escapeHtml(lead.nacionalidade || 'brasileira(o)')}" placeholder="brasileira(o)"></div>
+            <div class="form-row"><label>CPF</label><input id="f_cpf" autocomplete="off" value="${escapeHtml(lead.cpf || '')}" placeholder="xxx.xxx.xxx-xx"></div>
+            <div class="form-row"><label>RG</label><input id="f_rg" autocomplete="off" value="${escapeHtml(lead.rg || '')}" placeholder="Número do RG"></div>
+            <div class="form-row"><label>Sexo (ajusta automaticamente "portador(a)", "domiciliado(a)" etc. nos documentos)</label><select id="f_sexo"><option value="" ${!lead.sexo?'selected':''}>— Não informado —</option><option value="Feminino" ${lead.sexo==='Feminino'?'selected':''}>Feminino</option><option value="Masculino" ${lead.sexo==='Masculino'?'selected':''}>Masculino</option></select></div>
+            <div class="form-row"><label>Nacionalidade</label><input id="f_nacionalidade" value="${escapeHtml(lead.nacionalidade || (lead.sexo === 'Feminino' ? 'brasileira' : lead.sexo === 'Masculino' ? 'brasileiro' : 'brasileira(o)'))}" placeholder="brasileira(o)"></div>
             <div class="form-row"><label>Estado civil</label><input id="f_estadoCivil" value="${escapeHtml(lead.estadoCivil || '')}" placeholder="Ex.: casado(a), solteiro(a)"></div>
             <div class="form-row"><label>Profissão</label><input id="f_profissao" value="${escapeHtml(lead.profissao || '')}" placeholder="Ex.: aposentado(a)"></div>
-            <div class="form-row"><label>E-mail</label><input id="f_email" value="${escapeHtml(lead.email || '')}" placeholder="email@exemplo.com"></div>
-            <div class="form-row full"><label>Endereço completo</label><input id="f_enderecoCompleto" value="${escapeHtml(lead.enderecoCompleto || '')}" placeholder="Rua, número, bairro, cidade/UF, CEP"></div>
+            <div class="form-row"><label>E-mail</label><input id="f_email" autocomplete="off" value="${escapeHtml(lead.email || '')}" placeholder="email@exemplo.com"></div>
+            <div class="form-row full"><label>Endereço completo</label><input id="f_enderecoCompleto" autocomplete="off" value="${escapeHtml(lead.enderecoCompleto || '')}" placeholder="Rua, número, bairro, cidade/UF, CEP"></div>
             <div class="form-row full">
               <label>🔒 Senha do gov.br (informação sensível — só peça após a procuração assinada)</label>
               <div style="display:flex; gap:6px;">
-                <input type="password" id="f_senhaGov" value="${escapeHtml(lead.senhaGov || '')}" placeholder="Senha de acesso ao gov.br" style="flex:1;">
+                <input type="password" id="f_senhaGov" autocomplete="new-password" data-lpignore="true" data-1p-ignore value="${escapeHtml(lead.senhaGov || '')}" placeholder="Senha de acesso ao gov.br" style="flex:1;">
                 <button type="button" class="btn btn-ghost" id="btnToggleSenhaGov" style="white-space:nowrap;">👁️ Mostrar</button>
               </div>
             </div>
@@ -756,6 +804,13 @@ function openModal(id) {
   document.getElementById('f_temHonorariosIniciais').addEventListener('change', (e) => {
     document.getElementById('honorariosIniciaisWrap').style.display = e.target.value === 'Sim' ? 'block' : 'none';
   });
+  document.getElementById('f_sexo').addEventListener('change', (e) => {
+    const campoNacionalidade = document.getElementById('f_nacionalidade');
+    const valorAtual = campoNacionalidade.value.trim();
+    if (!valorAtual || valorAtual === 'brasileira(o)' || valorAtual === 'brasileira' || valorAtual === 'brasileiro') {
+      campoNacionalidade.value = e.target.value === 'Feminino' ? 'brasileira' : e.target.value === 'Masculino' ? 'brasileiro' : 'brasileira(o)';
+    }
+  });
   document.getElementById('f_canalOrigem').addEventListener('change', (e) => {
     document.getElementById('quemIndicouWrap').style.display = e.target.value === 'Indicação' ? 'block' : 'none';
   });
@@ -813,6 +868,7 @@ function openModal(id) {
     lead.valorHonorariosIniciais = lead.temHonorariosIniciais === 'Sim' ? document.getElementById('f_valorHonorariosIniciais').value.trim() : '';
     lead.cpf = document.getElementById('f_cpf').value.trim();
     lead.rg = document.getElementById('f_rg').value.trim();
+    lead.sexo = document.getElementById('f_sexo').value;
     lead.nacionalidade = document.getElementById('f_nacionalidade').value.trim();
     lead.estadoCivil = document.getElementById('f_estadoCivil').value.trim();
     lead.profissao = document.getElementById('f_profissao').value.trim();
@@ -822,8 +878,7 @@ function openModal(id) {
     lead.stage = document.getElementById('f_stage').value;
     lead.docs = Array.from(selectedDocs);
     lead.tags = Array.from(selectedTags);
-    lead.motivoNaoConversao = document.getElementById('f_motivoNaoConversao').value;
-    lead.proximoFollowup = document.getElementById('f_proximoFollowup').value;
+    // motivoNaoConversao e proximoFollowup agora são editados pelo card próprio (botão 📅 no card do quadro)
     lead.quemIndicou = lead.canalOrigem === 'Indicação' ? document.getElementById('f_quemIndicou').value.trim() : '';
     lead.senhaGov = document.getElementById('f_senhaGov').value;
     lead.clienteNovoRecorrente = document.getElementById('f_clienteNovoRecorrente').value;
@@ -851,14 +906,15 @@ function readFormIntoLead(baseLead) {
     outroProblema: document.getElementById('f_outroProblema') ? val('f_outroProblema') : (baseLead.outroProblema || ''),
     outroReu: document.getElementById('f_outroReu') ? val('f_outroReu') : (baseLead.outroReu || ''),
     cpf: val('f_cpf'), rg: val('f_rg'), nacionalidade: val('f_nacionalidade') || 'brasileira(o)',
+    sexo: document.getElementById('f_sexo') ? document.getElementById('f_sexo').value : (baseLead.sexo || ''),
     estadoCivil: val('f_estadoCivil'), profissao: val('f_profissao'), enderecoCompleto: val('f_enderecoCompleto'),
     email: val('f_email'), valorAproximado: val('f_valorAproximado'),
     temParceiro: document.getElementById('f_temParceiro') ? document.getElementById('f_temParceiro').value : 'Não',
     parceiroNome: val('f_parceiroNome'), parceiroContato: val('f_parceiroContato'), parceiroPercentual: val('f_parceiroPercentual'),
     temHonorariosIniciais: document.getElementById('f_temHonorariosIniciais') ? document.getElementById('f_temHonorariosIniciais').value : 'Não',
     valorHonorariosIniciais: val('f_valorHonorariosIniciais'),
-    motivoNaoConversao: document.getElementById('f_motivoNaoConversao') ? document.getElementById('f_motivoNaoConversao').value : '',
-    proximoFollowup: document.getElementById('f_proximoFollowup') ? document.getElementById('f_proximoFollowup').value : '',
+    motivoNaoConversao: baseLead.motivoNaoConversao || '',
+    proximoFollowup: baseLead.proximoFollowup || '',
     quemIndicou: val('f_quemIndicou'),
     senhaGov: document.getElementById('f_senhaGov') ? document.getElementById('f_senhaGov').value : '',
     clienteNovoRecorrente: document.getElementById('f_clienteNovoRecorrente') ? document.getElementById('f_clienteNovoRecorrente').value : 'Novo',
@@ -1032,6 +1088,9 @@ function gerarDocumento(tipo, lead) {
   const hoje = 'data da assinatura eletrônica';
   const qualif = `${escapeHtml(lead.nacionalidade || '[nacionalidade]')}, ${escapeHtml(lead.estadoCivil || '[estado civil]')}, ${escapeHtml(lead.profissao || '[profissão]')}`;
   const objeto = lead.tipoProblema === 'Outro' && lead.outroDescricao ? lead.outroDescricao : lead.tipoProblema;
+  const portadorTxt = lead.sexo === 'Feminino' ? 'portadora' : lead.sexo === 'Masculino' ? 'portador' : 'portador(a)';
+  const domiciliadoTxt = lead.sexo === 'Feminino' ? 'domiciliada' : lead.sexo === 'Masculino' ? 'domiciliado' : 'domiciliado(a)';
+  const inscritoTxt = lead.sexo === 'Feminino' ? 'inscrita' : lead.sexo === 'Masculino' ? 'inscrito' : 'inscrito(a)';
 
   let html = '';
 
@@ -1040,7 +1099,7 @@ function gerarDocumento(tipo, lead) {
     html = docWrapper(`
       ${pTitle('P R O C U R A Ç Ã O')}
       ${pJust('Pelo presente instrumento particular de mandato por mim abaixo assinado:')}
-      ${pJust(`<strong>OUTORGANTE: ${escapeHtml(lead.nome).toUpperCase()},</strong> ${qualif}, portador da cédula de identidade RG ${escapeHtml(lead.rg)}, inscrito no CPF ${escapeHtml(lead.cpf)}, residente e domiciliado(a) no endereço ${escapeHtml(lead.enderecoCompleto)}.`)}
+      ${pJust(`<strong>OUTORGANTE: ${escapeHtml(lead.nome).toUpperCase()},</strong> ${qualif}, ${portadorTxt} da cédula de identidade RG ${escapeHtml(lead.rg)}, ${inscritoTxt} no CPF ${escapeHtml(lead.cpf)}, residente e ${domiciliadoTxt} no endereço ${escapeHtml(lead.enderecoCompleto)}.`)}
       ${pJust(`<strong>OUTORGADO: LORENA MARANGON MANTOVANI,</strong> brasileira, advogada, inscrita na OAB/${ESCRITORIO_OAB_UF} sob o n° ${ESCRITORIO_OAB}, com endereço eletrônico: ${ESCRITORIO_EMAIL}.`)}
       ${pJust(`OBJETO: Representar o Outorgante, promovendo a defesa dos seus direitos e interesses, podendo, para tanto, propor quaisquer ações, medidas incidentais, acompanhar os processos administrativos e/ou judiciais em qualquer Juízo, Instância, Tribunal, ou Repartição Pública${objeto ? ', especialmente relacionados a ' + escapeHtml(objeto) + (lead.banco ? ' junto a(o) ' + escapeHtml(lead.banco) : '') : ''}.`)}
       ${pJust('PODERES: Por este instrumento particular de procuração, constitui meus bastantes procuradores os outorgados, concedendo-lhe os poderes inerentes da cláusula ad judicia et extra, para o foro em geral, podendo, portanto, promover quaisquer medidas judiciais ou administrativas, assinar termo, oferecer defesa, direta ou indireta, interpor recursos, ajuizar ações e conduzir os respectivos processos, solicitar, providenciar e ter acesso a documentos de qualquer natureza, sendo o presente instrumento de mandato oneroso e contratual podendo substabelecer este a outrem, com ou sem reserva de poderes, dando tudo por bom e valioso, a fim de praticar todos os demais atos necessários ao fiel desempenho deste mandato.')}
@@ -1053,7 +1112,7 @@ function gerarDocumento(tipo, lead) {
     if (!checarDadosMinimos(lead, [['nome','Nome'],['cpf','CPF'],['enderecoCompleto','Endereço completo']])) return;
     html = docWrapper(`
       ${pTitle('DECLARAÇÃO DE HIPOSSUFICIÊNCIA')}
-      ${pJust(`Eu, <strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${qualif}, portador da cédula de identidade RG ${escapeHtml(lead.rg || '[RG]')}, inscrito no CPF sob o nº ${escapeHtml(lead.cpf)}, residente e domiciliado(a) na ${escapeHtml(lead.enderecoCompleto)}, para os fins específicos dos preceitos contidos no inciso LXXIV, do art. 5° da Constituição Federal, c/c parágrafo único, do art. 98 e seguintes da Lei n° 13.105/2015 e na Lei n° 7.115/83, DECLARO, sob as penas da Lei, que não possuo condições de arcar com as despesas processuais sem prejuízo de meu sustento, motivo pelo qual, venho requerer o deferimento da concessão dos benefícios da <strong>JUSTIÇA GRATUITA</strong>. Requeiro, ainda que o benefício possa abranger os atos do processo em questão.`)}
+      ${pJust(`Eu, <strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${qualif}, ${portadorTxt} da cédula de identidade RG ${escapeHtml(lead.rg || '[RG]')}, ${inscritoTxt} no CPF sob o nº ${escapeHtml(lead.cpf)}, residente e ${domiciliadoTxt} na ${escapeHtml(lead.enderecoCompleto)}, para os fins específicos dos preceitos contidos no inciso LXXIV, do art. 5° da Constituição Federal, c/c parágrafo único, do art. 98 e seguintes da Lei n° 13.105/2015 e na Lei n° 7.115/83, DECLARO, sob as penas da Lei, que não possuo condições de arcar com as despesas processuais sem prejuízo de meu sustento, motivo pelo qual, venho requerer o deferimento da concessão dos benefícios da <strong>JUSTIÇA GRATUITA</strong>. Requeiro, ainda que o benefício possa abranger os atos do processo em questão.`)}
       <p style="text-align:center; margin-top:24px; font-size:12.5px;">${ESCRITORIO_CIDADE_UF}, ${hoje}.</p>
     `);
   }
@@ -1068,7 +1127,7 @@ function gerarDocumento(tipo, lead) {
     html = docWrapper(`
       ${pTitle('CONTRATO DE HONORÁRIOS ADVOCATÍCIOS')}
       ${pClause('CONTRATANTE:')}
-      ${pJust(`<strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${qualif}, inscrito no CPF ${escapeHtml(lead.cpf)}, residente e domiciliado(a) no endereço ${escapeHtml(lead.enderecoCompleto)}.`)}
+      ${pJust(`<strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${qualif}, ${inscritoTxt} no CPF ${escapeHtml(lead.cpf)}, residente e ${domiciliadoTxt} no endereço ${escapeHtml(lead.enderecoCompleto)}.`)}
       ${pClause('CONTRATADA:')}
       ${pJust(`<strong>LORENA MARANGON MANTOVANI</strong>, brasileira, advogada inscrita na OAB/${ESCRITORIO_OAB_UF} sob o nº ${ESCRITORIO_OAB}, com endereço eletrônico: ${ESCRITORIO_EMAIL}.`)}
       ${pJust('As partes acima identificadas têm, entre si, justo e acertado o presente Contrato de Honorários Advocatícios, que se regerá pelas cláusulas seguintes e pelas condições descritas no presente.')}
@@ -1090,7 +1149,7 @@ function gerarDocumento(tipo, lead) {
 
       ${pClause('DOS HONORÁRIOS PACTUADOS')}
       ${pJust('<strong>Cláusula 7ª.</strong> O (A) CONTRATANTE pagará à CONTRATADA em sede de honorários do processo:')}
-      ${pJust(`<strong>TOTAL:</strong> O percentual de <mark style="background:yellow;">${HONORARIOS_PERCENTUAL}</mark> sobre o valor total do proveito econômico obtido ao final do processo, seja este decorrente de sentença, acordo judicial ou extrajudicial, pagamento espontâneo, cumprimento de sentença, execução ou qualquer outra forma de adimplemento.`)}
+      ${pJust(`<strong>TOTAL:</strong> O percentual de <strong>${HONORARIOS_PERCENTUAL}</strong> sobre o valor total do proveito econômico obtido ao final do processo, seja este decorrente de sentença, acordo judicial ou extrajudicial, pagamento espontâneo, cumprimento de sentença, execução ou qualquer outra forma de adimplemento.`)}
       ${lead.temHonorariosIniciais === 'Sim' ? pJust(`Além dos honorários de êxito acima, fica ajustado o pagamento de honorários iniciais no valor de <strong>R$ ${formatarReais(lead.valorHonorariosIniciais)} (${valorPorExtenso(lead.valorHonorariosIniciais)})</strong>, devidos independentemente do resultado final do processo.`) : ''}
       ${pJust(`Pagamento via pix — Chave Pix (e-mail): <strong>${ESCRITORIO_EMAIL}</strong> — Titular: Lorena Marangon Mantovani.`)}
       ${pJust('No caso de atraso será cobrado: Juros de 1% ao mês, pro rata die, de acordo com o artigo 161 do Código Tributário Nacional; e Multa de 2% sobre o valor da prestação, de acordo com o artigo 52 do Código de Defesa do Consumidor.')}
