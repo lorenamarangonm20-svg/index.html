@@ -227,9 +227,10 @@ const LOGO_HEADER_B64 = "iVBORw0KGgoAAAANSUhEUgAABYYAAAC0CAIAAACv/m8iAABfz0lEQVR
 const STAGES = [
   "Novo lead", "Em qualificação", "Qualificado — aguardando agendamento",
   "Consulta agendada", "Consulta realizada — sem fechamento", "Proposta enviada",
-  "Contrato assinado", "Ação ajuizada", "Em andamento processual",
+  "Contrato assinado", "Reclamação Administrativa", "Ação ajuizada", "Em andamento processual",
   "Encerrado", "Pós-venda / Indicação",
 ];
+const MOTIVOS_NAO_CONVERSAO = ["", "Preço/honorários", "Insegurança/desconfiança", "Não decidiu", "Achou que era golpe", "Escolheu outro escritório", "Outro"];
 const CANAIS = ["Instagram", "TikTok", "YouTube Shorts", "Indicação", "Google", "Outro"];
 const BENEFICIOS = ["Aposentadoria INSS", "Pensão INSS", "BPC", "Servidor público", "Outro"];
 const PROBLEMAS = [
@@ -423,6 +424,9 @@ function fromRow(row) {
     estadoCivil: row.estado_civil || '', profissao: row.profissao || '', enderecoCompleto: row.endereco_completo || '',
     email: row.email || '',
     temHonorariosIniciais: row.tem_honorarios_iniciais || 'Não', valorHonorariosIniciais: row.valor_honorarios_iniciais || '',
+    motivoNaoConversao: row.motivo_nao_conversao || '', quemIndicou: row.quem_indicou || '',
+    senhaGov: row.senha_gov || '', clienteNovoRecorrente: row.cliente_novo_recorrente || 'Novo',
+    proximoFollowup: row.proximo_followup || '', notas: row.notas || [],
     criadoPor: row.criado_por || '', dataCriacao: row.data_criacao, ultimaAtualizacao: row.ultima_atualizacao,
   };
 }
@@ -438,6 +442,9 @@ function toRow(lead) {
     estado_civil: lead.estadoCivil || '', profissao: lead.profissao || '', endereco_completo: lead.enderecoCompleto || '',
     email: lead.email || '',
     tem_honorarios_iniciais: lead.temHonorariosIniciais || 'Não', valor_honorarios_iniciais: lead.valorHonorariosIniciais || '',
+    motivo_nao_conversao: lead.motivoNaoConversao || '', quem_indicou: lead.quemIndicou || '',
+    senha_gov: lead.senhaGov || '', cliente_novo_recorrente: lead.clienteNovoRecorrente || 'Novo',
+    proximo_followup: lead.proximoFollowup || null, notas: lead.notas || [],
     criado_por: lead.criadoPor, ultima_atualizacao: new Date().toISOString(),
   };
 }
@@ -516,6 +523,16 @@ function renderBoard() {
 function cardHtml(lead) {
   const tagsHtml = (lead.tags || []).map(t => `<span class="tag ${t.startsWith('urgente') ? 'urgent' : ''}">#${escapeHtml(t)}</span>`).join('');
   const parceiroHtml = lead.temParceiro === 'Sim' ? `<span class="tag" style="background:var(--gold); color:var(--navy);">🤝 Parceria${lead.parceiroNome ? ': ' + escapeHtml(lead.parceiroNome) : ''}</span>` : '';
+  let followupHtml = '';
+  if (lead.proximoFollowup) {
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    const dataFollowup = new Date(lead.proximoFollowup + 'T00:00:00');
+    const diffDias = Math.round((dataFollowup - hoje) / 86400000);
+    const dataFmt = dataFollowup.toLocaleDateString('pt-BR');
+    if (diffDias < 0) followupHtml = `<span class="tag urgent">⏰ Follow-up atrasado (${dataFmt})</span>`;
+    else if (diffDias === 0) followupHtml = `<span class="tag urgent">⏰ Follow-up hoje</span>`;
+    else if (diffDias <= 3) followupHtml = `<span class="tag" style="background:var(--gold); color:var(--navy);">⏰ Follow-up em ${diffDias}d</span>`;
+  }
   const stageOptions = STAGES.map(s => `<option value="${escapeHtml(s)}" ${s === lead.stage ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
   const problemaLabel = (lead.tipoProblema === 'Outro' && lead.outroDescricao) ? `Outro: ${lead.outroDescricao}` : (lead.tipoProblema || '—');
   return `
@@ -523,7 +540,7 @@ function cardHtml(lead) {
       <div class="name">${escapeHtml(lead.nome || '(sem nome)')}</div>
       <div class="meta">${escapeHtml(problemaLabel)}</div>
       <div class="meta">${escapeHtml(lead.banco || '')} ${lead.banco ? '·' : ''} ${daysAgo(lead.ultimaAtualizacao)}</div>
-      <div class="tags">${parceiroHtml}${tagsHtml}</div>
+      <div class="tags">${followupHtml}${parceiroHtml}${tagsHtml}</div>
       <select class="card-stage-select" data-id="${lead.id}">${stageOptions}</select>
     </div>`;
 }
@@ -570,6 +587,8 @@ function emptyLead() {
     temParceiro: 'Não', parceiroNome: '', parceiroContato: '', parceiroPercentual: '',
     cpf: '', rg: '', nacionalidade: 'brasileira(o)', estadoCivil: '', profissao: '', enderecoCompleto: '', email: '',
     temHonorariosIniciais: 'Não', valorHonorariosIniciais: '',
+    motivoNaoConversao: '', quemIndicou: '', senhaGov: '', clienteNovoRecorrente: 'Novo',
+    proximoFollowup: '', notas: [],
     observacoes: '', criadoPor: '', dataCriacao: new Date().toISOString(), ultimaAtualizacao: new Date().toISOString(),
   };
 }
@@ -593,6 +612,11 @@ function openModal(id) {
             <div class="form-row"><label>Telefone/WhatsApp</label><input id="f_telefone" value="${escapeHtml(lead.telefone)}" placeholder="(xx) xxxxx-xxxx"></div>
             <div class="form-row"><label>Cidade/UF</label><input id="f_cidadeUf" value="${escapeHtml(lead.cidadeUf)}" placeholder="Cidade/UF"></div>
             <div class="form-row"><label>Canal de origem</label><select id="f_canalOrigem">${CANAIS.map(c => `<option ${c===lead.canalOrigem?'selected':''}>${c}</option>`).join('')}</select></div>
+            <div class="form-row full" id="quemIndicouWrap" style="display:${lead.canalOrigem === 'Indicação' ? 'block' : 'none'};">
+              <label>Quem indicou</label>
+              <input id="f_quemIndicou" value="${escapeHtml(lead.quemIndicou || '')}" placeholder="Nome de quem indicou este lead">
+            </div>
+            <div class="form-row"><label>Cliente novo ou recorrente?</label><select id="f_clienteNovoRecorrente"><option ${lead.clienteNovoRecorrente!=='Recorrente'?'selected':''}>Novo</option><option ${lead.clienteNovoRecorrente==='Recorrente'?'selected':''}>Recorrente</option></select></div>
             <div class="form-row"><label>Tipo de benefício/renda</label><select id="f_tipoBeneficio">${BENEFICIOS.map(c => `<option ${c===lead.tipoBeneficio?'selected':''}>${c}</option>`).join('')}</select></div>
             <div class="form-row"><label>Faixa de renda (R$)</label><input id="f_faixaRenda" value="${escapeHtml(lead.faixaRenda)}" placeholder="Ex.: 1.500"></div>
             <div class="form-row"><label>Tipo de problema</label><select id="f_tipoProblema">${PROBLEMAS.map(c => `<option ${c===lead.tipoProblema?'selected':''}>${c}</option>`).join('')}</select></div>
@@ -615,6 +639,8 @@ function openModal(id) {
               </div>
             </div>
             <div class="form-row"><label>Valor aproximado do prejuízo (R$)</label><input id="f_valorAproximado" value="${escapeHtml(lead.valorAproximado)}" placeholder="Ex.: 3.000"></div>
+            <div class="form-row"><label>Motivo de não conversão (se aplicável)</label><select id="f_motivoNaoConversao">${MOTIVOS_NAO_CONVERSAO.map(m => `<option value="${escapeHtml(m)}" ${m===lead.motivoNaoConversao?'selected':''}>${m || '— Selecione —'}</option>`).join('')}</select></div>
+            <div class="form-row"><label>Próximo follow-up</label><input type="date" id="f_proximoFollowup" value="${escapeHtml(lead.proximoFollowup || '')}"></div>
             <div class="form-row"><label>Atuação em parceria?</label><select id="f_temParceiro"><option ${lead.temParceiro!=='Sim'?'selected':''}>Não</option><option ${lead.temParceiro==='Sim'?'selected':''}>Sim</option></select></div>
             <div class="form-row full" id="parceiroWrap" style="display:${lead.temParceiro === 'Sim' ? 'block' : 'none'};">
               <div style="background: var(--gold-light); border-radius: 8px; padding: 12px 14px; margin-bottom: 4px;">
@@ -637,9 +663,11 @@ function openModal(id) {
             <div class="form-row full"><label>Documentos recebidos</label><div class="checklist" id="f_docs">${DOCS.map(d => `<span class="chip-check ${lead.docs && lead.docs.includes(d) ? 'active' : ''}" data-doc="${escapeHtml(d)}">${d}</span>`).join('')}</div></div>
             <div class="form-row full"><label>Tags</label><div class="checklist" id="f_tags">${TAGS.map(t => `<span class="chip-check ${lead.tags && lead.tags.includes(t) ? 'tag-active' : ''}" data-tag="${escapeHtml(t)}">#${t}</span>`).join('')}</div></div>
             <div class="form-row full">
-              <label>Observações</label>
-              <textarea id="f_observacoes" placeholder="Anotações sobre o atendimento...">${escapeHtml(lead.observacoes)}</textarea>
-              ${lead.criadoPor ? `<div class="created-by">Cadastrado por ${escapeHtml(lead.criadoPor)}</div>` : ''}
+              <label>📝 Histórico de Observações (acumula a cada etapa, nada se perde)</label>
+              <div id="notasTimeline" style="max-height:220px; overflow-y:auto; margin-bottom:10px;"></div>
+              <textarea id="f_novaNota" placeholder="Escreva uma nova observação — será registrada com a etapa e data de hoje..."></textarea>
+              <button type="button" class="btn btn-ghost" id="btnAdicionarNota" style="margin-top:6px;">+ Adicionar observação</button>
+              ${lead.criadoPor ? `<div class="created-by">Lead cadastrado por ${escapeHtml(lead.criadoPor)}</div>` : ''}
             </div>
 
             <div class="form-row full" style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px;">
@@ -653,6 +681,13 @@ function openModal(id) {
             <div class="form-row"><label>Profissão</label><input id="f_profissao" value="${escapeHtml(lead.profissao || '')}" placeholder="Ex.: aposentado(a)"></div>
             <div class="form-row"><label>E-mail</label><input id="f_email" value="${escapeHtml(lead.email || '')}" placeholder="email@exemplo.com"></div>
             <div class="form-row full"><label>Endereço completo</label><input id="f_enderecoCompleto" value="${escapeHtml(lead.enderecoCompleto || '')}" placeholder="Rua, número, bairro, cidade/UF, CEP"></div>
+            <div class="form-row full">
+              <label>🔒 Senha do gov.br (informação sensível — só peça após a procuração assinada)</label>
+              <div style="display:flex; gap:6px;">
+                <input type="password" id="f_senhaGov" value="${escapeHtml(lead.senhaGov || '')}" placeholder="Senha de acesso ao gov.br" style="flex:1;">
+                <button type="button" class="btn btn-ghost" id="btnToggleSenhaGov" style="white-space:nowrap;">👁️ Mostrar</button>
+              </div>
+            </div>
 
             <div class="form-row"><label>Honorários iniciais, além do êxito?</label><select id="f_temHonorariosIniciais"><option ${lead.temHonorariosIniciais!=='Sim'?'selected':''}>Não</option><option ${lead.temHonorariosIniciais==='Sim'?'selected':''}>Sim</option></select></div>
             <div class="form-row" id="honorariosIniciaisWrap" style="display:${lead.temHonorariosIniciais === 'Sim' ? 'block' : 'none'};">
@@ -680,6 +715,38 @@ function openModal(id) {
 
   const selectedDocs = new Set(lead.docs || []);
   const selectedTags = new Set(lead.tags || []);
+
+  // migração: se o lead antigo só tinha "observacoes" (texto único) e ainda não tem notas, converte em nota inicial
+  if ((!lead.notas || lead.notas.length === 0) && lead.observacoes) {
+    lead.notas = [{ data: lead.dataCriacao || new Date().toISOString(), etapa: lead.stage, texto: lead.observacoes, autor: lead.criadoPor || '—' }];
+  }
+  if (!lead.notas) lead.notas = [];
+
+  function renderNotasTimeline() {
+    const container = document.getElementById('notasTimeline');
+    if (!lead.notas || lead.notas.length === 0) {
+      container.innerHTML = '<div style="font-size:11.5px; color:#9a9488; padding:8px 0;">Nenhuma observação registrada ainda.</div>';
+      return;
+    }
+    const ordenadas = [...lead.notas].sort((a, b) => new Date(b.data) - new Date(a.data));
+    container.innerHTML = ordenadas.map(n => `
+      <div style="border-left:3px solid var(--gold); background:var(--cream); border-radius:4px; padding:8px 10px; margin-bottom:6px;">
+        <div style="font-size:10.5px; font-weight:700; color:var(--navy);">${escapeHtml(n.etapa || '—')} · ${n.data ? new Date(n.data).toLocaleDateString('pt-BR') : ''} ${n.autor ? '· ' + escapeHtml(n.autor) : ''}</div>
+        <div style="font-size:12px; margin-top:2px; white-space:pre-wrap;">${escapeHtml(n.texto)}</div>
+      </div>`).join('');
+  }
+  renderNotasTimeline();
+
+  document.getElementById('btnAdicionarNota').addEventListener('click', () => {
+    const textarea = document.getElementById('f_novaNota');
+    const texto = textarea.value.trim();
+    if (!texto) return;
+    const etapaAtual = document.getElementById('f_stage').value;
+    lead.notas.push({ data: new Date().toISOString(), etapa: etapaAtual, texto, autor: session.user.email });
+    textarea.value = '';
+    renderNotasTimeline();
+  });
+
   document.getElementById('f_tipoProblema').addEventListener('change', (e) => {
     document.getElementById('outroWrap').style.display = e.target.value === 'Outro' ? 'block' : 'none';
   });
@@ -688,6 +755,15 @@ function openModal(id) {
   });
   document.getElementById('f_temHonorariosIniciais').addEventListener('change', (e) => {
     document.getElementById('honorariosIniciaisWrap').style.display = e.target.value === 'Sim' ? 'block' : 'none';
+  });
+  document.getElementById('f_canalOrigem').addEventListener('change', (e) => {
+    document.getElementById('quemIndicouWrap').style.display = e.target.value === 'Indicação' ? 'block' : 'none';
+  });
+  document.getElementById('btnToggleSenhaGov').addEventListener('click', () => {
+    const input = document.getElementById('f_senhaGov');
+    const btn = document.getElementById('btnToggleSenhaGov');
+    if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈 Ocultar'; }
+    else { input.type = 'password'; btn.textContent = '👁️ Mostrar'; }
   });
   document.querySelectorAll('#f_docs .chip-check').forEach(chip => chip.addEventListener('click', () => {
     const d = chip.dataset.doc;
@@ -746,7 +822,12 @@ function openModal(id) {
     lead.stage = document.getElementById('f_stage').value;
     lead.docs = Array.from(selectedDocs);
     lead.tags = Array.from(selectedTags);
-    lead.observacoes = document.getElementById('f_observacoes').value.trim();
+    lead.motivoNaoConversao = document.getElementById('f_motivoNaoConversao').value;
+    lead.proximoFollowup = document.getElementById('f_proximoFollowup').value;
+    lead.quemIndicou = lead.canalOrigem === 'Indicação' ? document.getElementById('f_quemIndicou').value.trim() : '';
+    lead.senhaGov = document.getElementById('f_senhaGov').value;
+    lead.clienteNovoRecorrente = document.getElementById('f_clienteNovoRecorrente').value;
+    // lead.notas já foi atualizado diretamente pelo botão "Adicionar observação"
 
     const ok = isNew ? await insertLead(lead) : await updateLead(lead);
     if (!ok) return;
@@ -776,6 +857,12 @@ function readFormIntoLead(baseLead) {
     parceiroNome: val('f_parceiroNome'), parceiroContato: val('f_parceiroContato'), parceiroPercentual: val('f_parceiroPercentual'),
     temHonorariosIniciais: document.getElementById('f_temHonorariosIniciais') ? document.getElementById('f_temHonorariosIniciais').value : 'Não',
     valorHonorariosIniciais: val('f_valorHonorariosIniciais'),
+    motivoNaoConversao: document.getElementById('f_motivoNaoConversao') ? document.getElementById('f_motivoNaoConversao').value : '',
+    proximoFollowup: document.getElementById('f_proximoFollowup') ? document.getElementById('f_proximoFollowup').value : '',
+    quemIndicou: val('f_quemIndicou'),
+    senhaGov: document.getElementById('f_senhaGov') ? document.getElementById('f_senhaGov').value : '',
+    clienteNovoRecorrente: document.getElementById('f_clienteNovoRecorrente') ? document.getElementById('f_clienteNovoRecorrente').value : 'Novo',
+    notas: baseLead.notas || [],
     canalOrigem: document.getElementById('f_canalOrigem') ? document.getElementById('f_canalOrigem').value : baseLead.canalOrigem,
     tipoBeneficio: document.getElementById('f_tipoBeneficio') ? document.getElementById('f_tipoBeneficio').value : baseLead.tipoBeneficio,
     faixaRenda: val('f_faixaRenda'),
@@ -1062,6 +1149,8 @@ function gerarDocumento(tipo, lead) {
       ${pSectionTitle('Dados do Caso')}
       <table style="width:100%; border-collapse:collapse;">
         ${pKV('Canal de origem', lead.canalOrigem)}
+        ${pKV('Quem indicou', lead.quemIndicou)}
+        ${pKV('Cliente novo ou recorrente', lead.clienteNovoRecorrente)}
         ${pKV('Tipo de benefício/renda', lead.tipoBeneficio)}
         ${pKV('Faixa de renda', lead.faixaRenda)}
         ${pKV('Tipo de problema', problemaTexto)}
@@ -1070,7 +1159,15 @@ function gerarDocumento(tipo, lead) {
         ${pKV('Banco/instituição envolvida', lead.banco)}
         ${pKV('Valor aproximado do prejuízo', lead.valorAproximado ? 'R$ ' + formatarReais(lead.valorAproximado) : '')}
         ${pKV('Etapa atual no funil', lead.stage)}
+        ${pKV('Motivo de não conversão', lead.motivoNaoConversao)}
+        ${pKV('Próximo follow-up', lead.proximoFollowup ? new Date(lead.proximoFollowup + 'T12:00:00').toLocaleDateString('pt-BR') : '')}
       </table>
+
+      ${pSectionTitle('🔒 Acesso gov.br — CONFIDENCIAL')}
+      <table style="width:100%; border-collapse:collapse;">
+        ${pKV('Senha do gov.br', lead.senhaGov || 'Não informada')}
+      </table>
+      ${lead.senhaGov ? `<p style="font-size:10px; color:#A13A3A; margin-top:2px;">⚠ Documento confidencial — não compartilhe, não deixe impresso em local de acesso comum e descarte com segurança após o uso.</p>` : ''}
 
       ${pSectionTitle('Honorários')}
       <table style="width:100%; border-collapse:collapse;">
@@ -1093,7 +1190,11 @@ function gerarDocumento(tipo, lead) {
       ${pSectionTitle('Tags')}
       ${pJust(tagsMarcadas)}
 
-      ${lead.observacoes ? pSectionTitle('Observações') + pJust(lead.observacoes) : ''}
+      ${(lead.notas && lead.notas.length > 0) ? pSectionTitle('Histórico de Observações') + [...lead.notas].sort((a,b) => new Date(b.data) - new Date(a.data)).map(n => `
+        <div style="border-left:3px solid #C5A483; background:#F7F5F2; border-radius:4px; padding:6px 10px; margin-bottom:6px;">
+          <div style="font-size:10px; font-weight:700; color:#15253F;">${escapeHtml(n.etapa || '—')} · ${n.data ? new Date(n.data).toLocaleDateString('pt-BR') : ''} ${n.autor ? '· ' + escapeHtml(n.autor) : ''}</div>
+          <div style="font-size:11.5px; margin-top:2px;">${escapeHtml(n.texto)}</div>
+        </div>`).join('') : ''}
 
       ${pSectionTitle('Controle Interno')}
       <table style="width:100%; border-collapse:collapse;">
@@ -1117,6 +1218,8 @@ function exportToExcel() {
     'Tipo de problema': l.tipoProblema, 'Banco': l.banco, 'Valor aproximado': l.valorAproximado,
     'Outro — descrição do processo': l.outroDescricao || '', 'Outro — problema': l.outroProblema || '', 'Outro — réu': l.outroReu || '',
     'Atuação em parceria': l.temParceiro || 'Não', 'Nome do parceiro': l.parceiroNome || '', 'Contato do parceiro': l.parceiroContato || '', 'Divisão de honorários': l.parceiroPercentual || '',
+    'Quem indicou': l.quemIndicou || '', 'Cliente novo ou recorrente': l.clienteNovoRecorrente || '', 'Motivo de não conversão': l.motivoNaoConversao || '', 'Próximo follow-up': l.proximoFollowup || '',
+    'Quantidade de observações registradas': (l.notas || []).length,
     'Etapa': l.stage, 'Documentos': (l.docs || []).join(', '), 'Tags': (l.tags || []).join(', '),
     'Observações': l.observacoes, 'Cadastrado por': l.criadoPor,
     'Data de criação': l.dataCriacao ? new Date(l.dataCriacao).toLocaleDateString('pt-BR') : '',
