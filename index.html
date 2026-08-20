@@ -10,6 +10,11 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <style>
   :root {
     --navy: #15253F;
@@ -245,6 +250,23 @@
   .dash-card .dash-sub { font-size: 11.5px; color: var(--text-muted); margin-bottom: 16px; }
   .dash-card canvas { max-height: 260px; }
   .chart-wrap { position: relative; height: 260px; width: 100%; }
+  .map-wrap { position: relative; height: 420px; width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  #mapaClientes { height: 100%; width: 100%; background: var(--cream-soft); }
+  #mapaResumo { color: var(--gold-dark); font-weight: 600; }
+  .custom-pin .pin-dot {
+    width: 16px; height: 16px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+    background: var(--navy); border: 2px solid var(--gold);
+    box-shadow: 0 2px 6px rgba(12,23,41,0.5);
+  }
+  .custom-cluster .cluster-badge {
+    width: 34px; height: 34px; border-radius: 50%; background: var(--gold);
+    color: var(--navy-deep); font-family: var(--font); font-weight: 700; font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--navy); box-shadow: 0 2px 8px rgba(12,23,41,0.35);
+  }
+  .leaflet-popup-content-wrapper { border-radius: 8px; font-family: var(--font); font-size: 12.5px; }
+  .leaflet-popup-content-wrapper strong { color: var(--navy); }
+  @media (max-width: 640px) { .map-wrap { height: 320px; } }
   .dash-empty { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 13px; }
   @media (max-width: 900px) {
     .dash-grid { grid-template-columns: 1fr; }
@@ -725,10 +747,77 @@ function destroyDashCharts() {
 
 const CHART_COLORS = ['#15253F', '#C5A483', '#A9835E', '#3F6B4F', '#9C4A3F', '#1F3556', '#7C7468', '#E4D3BF'];
 
+/* ---------- geolocalização (mapa de clientes) ---------- */
+// Capitais dos 26 estados + DF
+const BRASIL_CAPITAIS = {
+  'rio branco-ac': [-9.9754, -67.8249], 'maceio-al': [-9.6658, -35.735], 'macapa-ap': [0.0349, -51.0694],
+  'manaus-am': [-3.119, -60.0217], 'salvador-ba': [-12.9714, -38.5014], 'fortaleza-ce': [-3.7172, -38.5433],
+  'brasilia-df': [-15.7939, -47.8828], 'vitoria-es': [-20.3155, -40.3128], 'goiania-go': [-16.6864, -49.2643],
+  'sao luis-ma': [-2.5307, -44.3068], 'cuiaba-mt': [-15.601, -56.0974], 'campo grande-ms': [-20.4697, -54.6201],
+  'belo horizonte-mg': [-19.9167, -43.9345], 'belem-pa': [-1.4558, -48.4902], 'joao pessoa-pb': [-7.1195, -34.845],
+  'curitiba-pr': [-25.4284, -49.2733], 'recife-pe': [-8.0476, -34.877], 'teresina-pi': [-5.0892, -42.8016],
+  'rio de janeiro-rj': [-22.9068, -43.1729], 'natal-rn': [-5.7945, -35.211], 'porto alegre-rs': [-30.0346, -51.2177],
+  'porto velho-ro': [-8.7619, -63.9039], 'boa vista-rr': [2.8235, -60.6758], 'florianopolis-sc': [-27.5954, -48.548],
+  'sao paulo-sp': [-23.5505, -46.6333], 'aracaju-se': [-10.9472, -37.0731], 'palmas-to': [-10.1689, -48.3317],
+};
+// Cidades adicionais de Minas Gerais (região de maior atuação do escritório)
+const BRASIL_CIDADES_MG = {
+  'juiz de fora-mg': [-21.7642, -43.3496], 'uberlandia-mg': [-18.9186, -48.2772], 'contagem-mg': [-19.9317, -44.0536],
+  'uberaba-mg': [-19.7483, -47.9319], 'governador valadares-mg': [-18.8511, -41.9494], 'ipatinga-mg': [-19.4683, -42.5368],
+  'montes claros-mg': [-16.735, -43.8617], 'ribeirao das neves-mg': [-19.7669, -44.0867], 'betim-mg': [-19.9678, -44.1983],
+  'pocos de caldas-mg': [-21.7877, -46.5614], 'divinopolis-mg': [-20.139, -44.8839], 'sete lagoas-mg': [-19.4658, -44.2467],
+  'barbacena-mg': [-21.2256, -43.7736], 'muriae-mg': [-21.1306, -42.3664], 'uba-mg': [-21.1206, -42.9439],
+  'vicosa-mg': [-20.7546, -42.8825], 'cataguases-mg': [-21.3897, -42.6969], 'sao joao del rei-mg': [-21.1356, -44.2617],
+  'lavras-mg': [-21.2447, -45.0], 'varginha-mg': [-21.5511, -45.4306], 'passos-mg': [-20.7181, -46.6094],
+  'patos de minas-mg': [-18.5789, -46.5178], 'teofilo otoni-mg': [-17.8586, -41.5053], 'itabira-mg': [-19.6189, -43.2264],
+  'coronel fabriciano-mg': [-19.5186, -42.6289], 'conselheiro lafaiete-mg': [-20.6603, -43.7864], 'araxa-mg': [-19.5928, -46.9408],
+  'pouso alegre-mg': [-22.2306, -45.9364], 'itajuba-mg': [-22.4256, -45.4547], 'leopoldina-mg': [-21.5308, -42.6428],
+  'ponte nova-mg': [-20.4172, -42.9042], 'manhuacu-mg': [-20.2586, -42.0308],
+  'para de minas-mg': [-19.8611, -44.6072], 'itauna-mg': [-20.0733, -44.5808], 'formiga-mg': [-20.4658, -45.4267],
+  'unai-mg': [-16.3572, -46.9061], 'ituiutaba-mg': [-18.9694, -49.4636], 'nova lima-mg': [-19.9856, -43.8467],
+  'sabara-mg': [-19.8886, -43.8058], 'santa luzia-mg': [-19.7697, -43.8514], 'vespasiano-mg': [-19.6919, -43.9236],
+};
+const BRASIL_CIDADES = Object.assign({}, BRASIL_CAPITAIS, BRASIL_CIDADES_MG);
+// Centro aproximado de cada estado, usado quando a cidade não está na base acima
+const BRASIL_ESTADOS_CENTRO = {
+  ac: [-9.0238, -70.812], al: [-9.5713, -36.782], ap: [1.4148, -51.7833], am: [-4.0, -63.0],
+  ba: [-12.5797, -41.7007], ce: [-5.4984, -39.3206], df: [-15.7939, -47.8828], es: [-19.1834, -40.3089],
+  go: [-15.827, -49.8362], ma: [-4.9609, -45.2744], mt: [-12.6819, -56.9211], ms: [-20.7722, -54.7852],
+  mg: [-18.5122, -44.555], pa: [-3.9014, -52.4783], pb: [-7.2399, -36.7819], pr: [-24.8932, -51.4],
+  pe: [-8.8137, -37.0], pi: [-7.7183, -42.7289], rj: [-22.35, -42.65], rn: [-5.4026, -36.9541],
+  rs: [-30.0346, -53.2177], ro: [-10.9472, -62.8182], rr: [1.99, -61.33], sc: [-27.2423, -50.2189],
+  sp: [-22.19, -48.79], se: [-10.5741, -37.3857], to: [-10.1753, -48.2982],
+};
+
+function normalizarTexto_(str) {
+  return (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function parseCidadeUf_(str) {
+  if (!str) return null;
+  const m = String(str).trim().match(/^(.*?)[\/\-,]\s*([A-Za-z]{2})\s*$/);
+  if (!m) return null;
+  return { cidade: m[1].trim(), uf: m[2].toUpperCase() };
+}
+
+function geocodificarCidade(cidadeUfStr) {
+  const parsed = parseCidadeUf_(cidadeUfStr);
+  if (!parsed) return null;
+  const chaveCidade = normalizarTexto_(parsed.cidade) + '-' + parsed.uf.toLowerCase();
+  if (BRASIL_CIDADES[chaveCidade]) {
+    return { coords: BRASIL_CIDADES[chaveCidade], precisao: 'cidade', cidade: parsed.cidade, uf: parsed.uf };
+  }
+  if (BRASIL_ESTADOS_CENTRO[parsed.uf.toLowerCase()]) {
+    return { coords: BRASIL_ESTADOS_CENTRO[parsed.uf.toLowerCase()], precisao: 'estado', cidade: parsed.cidade, uf: parsed.uf };
+  }
+  return null;
+}
+
 function renderDashboard() {
   const el = document.getElementById('dashboardWrap');
   if (!el) return;
   destroyDashCharts();
+  if (dashMap) { dashMap.remove(); dashMap = null; }
 
   const periodo = selectedMonthKey === 'todos'
     ? leads
@@ -765,6 +854,11 @@ function renderDashboard() {
         <h3>Parceria</h3>
         <p class="dash-sub">Participação de leads em parceria no período</p>
         <div class="chart-wrap"><canvas id="chartParceria"></canvas></div>
+      </div>
+      <div class="dash-card span-2" id="mapaCard">
+        <h3>🗺️ Nossos clientes pelo Brasil</h3>
+        <p class="dash-sub" id="mapaResumo">Todas as cidades já atendidas, independente da aba selecionada acima</p>
+        <div class="map-wrap"><div id="mapaClientes"></div></div>
       </div>
     </div>
   `;
@@ -825,6 +919,72 @@ function renderDashboard() {
     data: { labels: ['Em parceria', 'Sem parceria'], datasets: [{ data: [comParceria, semParceria], backgroundColor: ['#C5A483', '#DDD5C8'] }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } },
   });
+
+  renderMapaClientes();
+}
+
+let dashMap = null;
+function renderMapaClientes() {
+  if (dashMap) { dashMap.remove(); dashMap = null; }
+  const mapEl = document.getElementById('mapaClientes');
+  if (!mapEl) return;
+
+  // O mapa sempre mostra todos os leads já cadastrados, independente do mês selecionado acima
+  const geocodificados = leads
+    .map(l => ({ lead: l, geo: geocodificarCidade(l.cidadeUf) }))
+    .filter(x => x.geo);
+
+  const resumoEl = document.getElementById('mapaResumo');
+  if (geocodificados.length === 0) {
+    if (resumoEl) resumoEl.textContent = 'Ainda não há cidades suficientes preenchidas para mostrar no mapa. Preencha o campo "Cidade/UF" dos leads (ex.: Juiz de Fora/MG).';
+    mapEl.innerHTML = '';
+    return;
+  }
+
+  const cidadesUnicas = new Set(geocodificados.map(x => x.geo.cidade.toLowerCase() + '-' + x.geo.uf));
+  const estadosUnicos = new Set(geocodificados.map(x => x.geo.uf));
+  if (resumoEl) {
+    resumoEl.innerHTML = `🎉 Já atendemos <strong>${leads.length} cliente${leads.length === 1 ? '' : 's'}</strong> em <strong>${cidadesUnicas.size} cidade${cidadesUnicas.size === 1 ? '' : 's'}</strong> de <strong>${estadosUnicos.size} estado${estadosUnicos.size === 1 ? '' : 's'}</strong>! Continue assim, time 💪`;
+  }
+
+  dashMap = L.map('mapaClientes', { scrollWheelZoom: false }).setView([-14.235, -51.9253], 4);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 18,
+  }).addTo(dashMap);
+
+  const pinIcon = L.divIcon({
+    className: 'custom-pin',
+    html: '<div class="pin-dot"></div>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+
+  const cluster = L.markerClusterGroup({
+    iconCreateFunction: (c) => L.divIcon({
+      html: `<div class="cluster-badge">${c.getChildCount()}</div>`,
+      className: 'custom-cluster',
+      iconSize: [34, 34],
+    }),
+  });
+
+  // Agrupa leads por coordenada, para mostrar todos os nomes num popup só
+  const porCoord = {};
+  geocodificados.forEach(({ lead, geo }) => {
+    const key = geo.coords.join(',');
+    if (!porCoord[key]) porCoord[key] = { coords: geo.coords, cidade: geo.cidade, uf: geo.uf, nomes: [] };
+    porCoord[key].nomes.push(lead.nome || '(sem nome)');
+  });
+
+  Object.values(porCoord).forEach(grupo => {
+    const marker = L.marker(grupo.coords, { icon: pinIcon });
+    const listaNomes = grupo.nomes.slice(0, 8).map(n => `• ${escapeHtml(n)}`).join('<br>') + (grupo.nomes.length > 8 ? `<br>+ ${grupo.nomes.length - 8} outro(s)` : '');
+    marker.bindPopup(`<strong>${escapeHtml(grupo.cidade)}/${escapeHtml(grupo.uf)}</strong><br>${grupo.nomes.length} cliente${grupo.nomes.length === 1 ? '' : 's'}<br><br>${listaNomes}`);
+    cluster.addLayer(marker);
+  });
+
+  dashMap.addLayer(cluster);
+  setTimeout(() => { if (dashMap) dashMap.invalidateSize(); }, 150);
 }
 
 /* ---------- board ---------- */
