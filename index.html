@@ -345,6 +345,11 @@ const STAGES = [
   "Contrato assinado", "Reclamação Administrativa", "Sem viabilidade jurídica", "Ação ajuizada", "Em andamento processual",
   "Encerrado", "Pós-venda / Indicação",
 ];
+const STAGES_PROCESSO = [
+  "Processo protocolado", "Justiça Gratuita concedida", "Audiência de conciliação",
+  "Contestação", "Réplica", "Saneamento do processo", "Sentença",
+  "Embargos de Declaração", "Apelação",
+];
 const MOTIVOS_NAO_CONVERSAO = ["", "Preço/honorários", "Insegurança/desconfiança", "Não decidiu", "Achou que era golpe", "Escolheu outro escritório", "Outro"];
 const CANAIS = ["Instagram", "TikTok", "YouTube Shorts", "Indicação", "Google", "Outro"];
 const BENEFICIOS = ["Aposentadoria INSS", "Pensão INSS", "BPC", "Servidor público", "Outro"];
@@ -497,11 +502,13 @@ function renderAppShell() {
       <div class="month-tabs" id="monthTabs" style="padding:0;"></div>
       <div class="view-toggle" id="viewToggle">
         <button type="button" data-view="quadro" class="active">📋 Quadro</button>
+        <button type="button" data-view="processos">⚖️ Processos</button>
         <button type="button" data-view="dashboard">📊 Dashboard</button>
       </div>
     </div>
     <div class="kpis" id="kpiStrip"></div>
     <div class="board-wrap" id="boardWrap"><div class="board" id="board"></div></div>
+    <div class="board-wrap" id="boardProcessosWrap" style="display:none;"><div class="board" id="boardProcessos"></div></div>
     <div class="dashboard-wrap" id="dashboardWrap" style="display:none;"></div>
     <div class="note">Dados salvos na nuvem (Supabase) e compartilhados com toda a equipe do escritório em tempo real.</div>
     <div id="modalRoot"></div>
@@ -535,8 +542,10 @@ function setActiveView(view) {
   activeView = view;
   document.querySelectorAll('#viewToggle button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   document.getElementById('boardWrap').style.display = view === 'quadro' ? '' : 'none';
+  document.getElementById('boardProcessosWrap').style.display = view === 'processos' ? '' : 'none';
   document.getElementById('dashboardWrap').style.display = view === 'dashboard' ? '' : 'none';
   if (view === 'dashboard') renderDashboard();
+  if (view === 'processos') renderBoardProcessos();
 }
 
 function subscribeRealtime() {
@@ -547,6 +556,8 @@ function subscribeRealtime() {
       renderMonthTabs();
       renderBoard();
       renderKpis();
+      if (activeView === 'processos') renderBoardProcessos();
+      if (activeView === 'dashboard') renderDashboard();
     })
     .subscribe();
 }
@@ -563,7 +574,7 @@ function fromRow(row) {
     canalOrigem: row.canal_origem || CANAIS[0], tipoBeneficio: row.tipo_beneficio || BENEFICIOS[0],
     faixaRenda: row.faixa_renda || '', tipoProblema: row.tipo_problema || PROBLEMAS[0],
     banco: row.banco || '', valorAproximado: row.valor_aproximado || '', stage: row.stage || STAGES[0],
-    numeroProcesso: row.numero_processo || '', vara: row.vara || '', andamento: row.andamento || '',
+    numeroProcesso: row.numero_processo || '', vara: row.vara || '', andamento: row.andamento || '', etapaProcessual: row.etapa_processual || '',
     docs: row.docs || [], tags: row.tags || [], observacoes: row.observacoes || '',
     outroDescricao: row.outro_descricao || '', outroProblema: row.outro_problema || '', outroReu: row.outro_reu || '',
     temParceiro: row.tem_parceiro || 'Não', parceiroNome: row.parceiro_nome || '', parceiroContato: row.parceiro_contato || '', parceiroPercentual: row.parceiro_percentual || '',
@@ -584,7 +595,9 @@ function toRow(lead) {
     nome: lead.nome, telefone: lead.telefone, cidade_uf: lead.cidadeUf,
     canal_origem: lead.canalOrigem, tipo_beneficio: lead.tipoBeneficio, faixa_renda: lead.faixaRenda,
     tipo_problema: lead.tipoProblema, banco: lead.banco, valor_aproximado: lead.valorAproximado,
-    stage: lead.stage, numero_processo: lead.numeroProcesso || '', vara: lead.vara || '', andamento: lead.andamento || '', docs: lead.docs, tags: lead.tags, observacoes: lead.observacoes,
+    stage: lead.stage, numero_processo: lead.numeroProcesso || '', vara: lead.vara || '', andamento: lead.andamento || '',
+    etapa_processual: lead.numeroProcesso ? (lead.etapaProcessual || STAGES_PROCESSO[0]) : '',
+    docs: lead.docs, tags: lead.tags, observacoes: lead.observacoes,
     outro_descricao: lead.outroDescricao || '', outro_problema: lead.outroProblema || '', outro_reu: lead.outroReu || '',
     tem_parceiro: lead.temParceiro || 'Não', parceiro_nome: lead.parceiroNome || '', parceiro_contato: lead.parceiroContato || '', parceiro_percentual: lead.parceiroPercentual || '',
     parceiro_oab: lead.parceiroOab || '', parceiro_endereco: lead.parceiroEndereco || '',
@@ -1069,7 +1082,7 @@ function attachBoardEvents() {
       if (!lead) return;
       lead.stage = e.target.value;
       const ok = await updateLead(lead);
-      if (ok) { await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); }
+      if (ok) { await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); if (activeView === 'processos') renderBoardProcessos(); }
     });
   });
   document.querySelectorAll('.column-body').forEach(col => {
@@ -1083,7 +1096,92 @@ function attachBoardEvents() {
       if (!lead) return;
       lead.stage = col.dataset.stage;
       const ok = await updateLead(lead);
-      if (ok) { await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); }
+      if (ok) { await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); if (activeView === 'processos') renderBoardProcessos(); }
+    });
+  });
+}
+
+/* ---------- quadro de processos distribuídos ---------- */
+function renderBoardProcessos() {
+  const board = document.getElementById('boardProcessos');
+  if (!board) return;
+
+  const comProcesso = leads.filter(l => (l.numeroProcesso || '').trim());
+
+  if (comProcesso.length === 0) {
+    board.innerHTML = `
+      <div class="empty-state" style="width:100%;">
+        <div class="icon">⚖️</div>
+        <h2>Nenhum processo distribuído ainda</h2>
+        <p>Assim que um lead tiver o "Número do processo" preenchido (no card dele, na seção Funil e acompanhamento), ele aparece automaticamente aqui.</p>
+      </div>`;
+    return;
+  }
+
+  board.innerHTML = STAGES_PROCESSO.map(etapa => {
+    const cardsInStage = comProcesso.filter(l => (l.etapaProcessual || STAGES_PROCESSO[0]) === etapa);
+    const cardsHtml = cardsInStage.length ? cardsInStage.map(cardHtmlProcesso).join('') : '<div class="column-empty">Nenhum processo nesta etapa</div>';
+    return `
+      <div class="column" data-etapa-processual="${escapeHtml(etapa)}">
+        <div class="column-header"><span>${escapeHtml(etapa)}</span><span class="count">${cardsInStage.length}</span></div>
+        <div class="column-body" data-etapa-processual="${escapeHtml(etapa)}">${cardsHtml}</div>
+      </div>`;
+  }).join('');
+
+  attachBoardProcessosEvents();
+}
+
+function cardHtmlProcesso(lead) {
+  const parteRe = (lead.tipoProblema === 'Outro' && lead.outroReu) ? lead.outroReu : (lead.banco || '');
+  const etapaAtual = lead.etapaProcessual || STAGES_PROCESSO[0];
+  const etapaOptions = STAGES_PROCESSO.map(s => `<option value="${escapeHtml(s)}" ${s === etapaAtual ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
+  const iniciais = (lead.nome || '?').trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase();
+  return `
+    <div class="card" draggable="true" data-id="${lead.id}">
+      <div class="card-top">
+        <div class="avatar">${escapeHtml(iniciais)}</div>
+        <div style="flex:1; min-width:0;">
+          <div class="name">${escapeHtml(lead.nome || '(sem nome)')}</div>
+          <div class="meta">${escapeHtml(parteRe) || '—'}</div>
+          <div class="meta">${escapeHtml(lead.numeroProcesso || '')}</div>
+          ${lead.vara ? `<div class="meta">${escapeHtml(lead.vara)}</div>` : ''}
+        </div>
+      </div>
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <select class="card-etapa-processual-select" data-id="${lead.id}" style="flex:1; margin-top:0;">${etapaOptions}</select>
+      </div>
+    </div>`;
+}
+
+function attachBoardProcessosEvents() {
+  document.querySelectorAll('#boardProcessos .card').forEach(card => {
+    card.addEventListener('click', (e) => { if (e.target.classList.contains('card-etapa-processual-select')) return; openModal(card.dataset.id); });
+    card.addEventListener('dragstart', (e) => { card.classList.add('dragging'); e.dataTransfer.setData('text/plain', card.dataset.id); });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+  document.querySelectorAll('#boardProcessos .card-etapa-processual-select').forEach(sel => {
+    sel.addEventListener('click', (e) => e.stopPropagation());
+    sel.addEventListener('change', async (e) => {
+      const id = e.target.dataset.id;
+      const lead = leads.find(l => l.id === id);
+      if (!lead) return;
+      lead.etapaProcessual = e.target.value;
+      const ok = await updateLead(lead);
+      if (ok) { await loadLeads(); renderBoardProcessos(); }
+    });
+  });
+  document.querySelectorAll('#boardProcessos .column-body').forEach(col => {
+    col.addEventListener('dragover', (e) => { e.preventDefault(); col.closest('.column').classList.add('dragover'); });
+    col.addEventListener('dragleave', () => col.closest('.column').classList.remove('dragover'));
+    col.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      col.closest('.column').classList.remove('dragover');
+      const id = e.dataTransfer.getData('text/plain');
+      const lead = leads.find(l => l.id === id);
+      if (!lead) return;
+      lead.etapaProcessual = col.dataset.etapaProcessual;
+      const ok = await updateLead(lead);
+      if (ok) { await loadLeads(); renderBoardProcessos(); }
     });
   });
 }
@@ -1092,7 +1190,7 @@ function emptyLead() {
   return {
     id: null, nome: '', telefone: '', cidadeUf: '', canalOrigem: CANAIS[0],
     tipoBeneficio: BENEFICIOS[0], faixaRenda: '', tipoProblema: PROBLEMAS[0],
-    banco: '', valorAproximado: '', stage: STAGES[0], numeroProcesso: '', vara: '', andamento: '', docs: [], tags: [],
+    banco: '', valorAproximado: '', stage: STAGES[0], numeroProcesso: '', vara: '', andamento: '', etapaProcessual: '', docs: [], tags: [],
     outroDescricao: '', outroProblema: '', outroReu: '',
     temParceiro: 'Não', parceiroNome: '', parceiroContato: '', parceiroPercentual: '', parceiroOab: '', parceiroEndereco: '',
     analfabeto: 'Não', rogoNome: '', rogoCpf: '',
@@ -1143,7 +1241,7 @@ function openFollowupModal(id) {
     lead.proximoFollowup = document.getElementById('ff_proximoFollowup').value;
     lead.motivoNaoConversao = document.getElementById('ff_motivoNaoConversao').value;
     const ok = await updateLead(lead);
-    if (ok) { close(); await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); }
+    if (ok) { close(); await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); if (activeView === 'processos') renderBoardProcessos(); }
   });
 }
 
@@ -1272,6 +1370,10 @@ function openModal(id) {
             <div class="form-row"><label>Número do processo <span style="font-weight:400; text-transform:none; letter-spacing:0;">(se já ajuizado)</span></label><input id="f_numeroProcesso" value="${escapeHtml(lead.numeroProcesso || '')}" placeholder="0000000-00.0000.0.00.0000"></div>
             <div class="form-row"><label>Vara</label><input id="f_vara" value="${escapeHtml(lead.vara || '')}" placeholder="Ex.: 2ª Vara Cível de Juiz de Fora"></div>
             <div class="form-row full"><label>Andamento processual</label><input id="f_andamento" value="${escapeHtml(lead.andamento || '')}" placeholder="Ex.: Aguardando contestação"></div>
+            <div class="form-row full" id="etapaProcessualWrap" style="display:${(lead.numeroProcesso || '').trim() ? 'block' : 'none'};">
+              <label>Etapa no quadro de processos (aba "⚖️ Processos")</label>
+              <select id="f_etapaProcessual">${STAGES_PROCESSO.map(s => `<option ${((lead.etapaProcessual || STAGES_PROCESSO[0])===s)?'selected':''}>${escapeHtml(s)}</option>`).join('')}</select>
+            </div>
             <div class="form-row full"><label>Documentos recebidos</label><div class="checklist" id="f_docs">${DOCS.map(d => `<span class="chip-check ${lead.docs && lead.docs.includes(d) ? 'active' : ''}" data-doc="${escapeHtml(d)}">${d}</span>`).join('')}</div></div>
             <div class="form-row full"><label>Tags</label><div class="checklist" id="f_tags">${TAGS.map(t => `<span class="chip-check ${lead.tags && lead.tags.includes(t) ? 'tag-active' : ''}" data-tag="${escapeHtml(t)}">#${t}</span>`).join('')}</div></div>
             <div class="form-row full">
@@ -1359,6 +1461,9 @@ function openModal(id) {
   document.getElementById('f_analfabeto').addEventListener('change', (e) => {
     document.getElementById('rogoWrap').style.display = e.target.value === 'Sim' ? 'block' : 'none';
   });
+  document.getElementById('f_numeroProcesso').addEventListener('input', (e) => {
+    document.getElementById('etapaProcessualWrap').style.display = e.target.value.trim() ? 'block' : 'none';
+  });
   document.getElementById('f_temHonorariosIniciais').addEventListener('change', (e) => {
     document.getElementById('honorariosIniciaisWrap').style.display = e.target.value === 'Sim' ? 'block' : 'none';
   });
@@ -1409,7 +1514,7 @@ function openModal(id) {
     document.getElementById('btnDelete').addEventListener('click', async () => {
       if (!confirm('Tem certeza que deseja excluir este lead? Essa ação não pode ser desfeita.')) return;
       const ok = await deleteLeadRow(lead.id);
-      if (ok) { close(); await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); }
+      if (ok) { close(); await loadLeads(); renderMonthTabs(); renderBoard(); renderKpis(); if (activeView === 'processos') renderBoardProcessos(); }
     });
   }
 
@@ -1448,6 +1553,7 @@ function openModal(id) {
     lead.valorAproximado = document.getElementById('f_valorAproximado').value.trim();
     lead.stage = document.getElementById('f_stage').value;
     lead.numeroProcesso = document.getElementById('f_numeroProcesso').value.trim();
+    lead.etapaProcessual = lead.numeroProcesso ? document.getElementById('f_etapaProcessual').value : '';
     lead.vara = document.getElementById('f_vara').value.trim();
     lead.andamento = document.getElementById('f_andamento').value.trim();
     lead.docs = Array.from(selectedDocs);
@@ -1501,6 +1607,7 @@ function readFormIntoLead(baseLead) {
     faixaRenda: val('f_faixaRenda'),
     stage: document.getElementById('f_stage') ? document.getElementById('f_stage').value : baseLead.stage,
     numeroProcesso: val('f_numeroProcesso'), vara: val('f_vara'), andamento: val('f_andamento'),
+    etapaProcessual: document.getElementById('f_etapaProcessual') ? document.getElementById('f_etapaProcessual').value : (baseLead.etapaProcessual || ''),
     docs: docsEls.length ? Array.from(docsEls).map(c => c.dataset.doc) : (baseLead.docs || []),
     tags: tagsEls.length ? Array.from(tagsEls).map(c => c.dataset.tag) : (baseLead.tags || []),
     observacoes: val('f_observacoes'),
