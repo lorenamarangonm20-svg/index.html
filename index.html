@@ -510,6 +510,7 @@ function renderAppShell() {
     </div>
     <div class="kpis" id="kpiStrip"></div>
     <div class="board-wrap" id="boardWrap"><div class="board" id="board"></div></div>
+    <div class="kpis" id="kpiProcessos" style="display:none;"></div>
     <div class="board-wrap" id="boardProcessosWrap" style="display:none;"><div class="board" id="boardProcessos"></div></div>
     <div class="dashboard-wrap" id="dashboardWrap" style="display:none;"></div>
     <div class="note">Dados salvos na nuvem (Supabase) e compartilhados com toda a equipe do escritório em tempo real.</div>
@@ -545,6 +546,8 @@ function setActiveView(view) {
   document.querySelectorAll('#viewToggle button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   document.getElementById('boardWrap').style.display = view === 'quadro' ? '' : 'none';
   document.getElementById('boardProcessosWrap').style.display = view === 'processos' ? '' : 'none';
+  document.getElementById('kpiProcessos').style.display = view === 'processos' ? '' : 'none';
+  document.getElementById('kpiStrip').style.display = view === 'processos' ? 'none' : '';
   document.getElementById('dashboardWrap').style.display = view === 'dashboard' ? '' : 'none';
   if (view === 'dashboard') renderDashboard();
   if (view === 'processos') renderBoardProcessos();
@@ -725,7 +728,7 @@ function renderKpis() {
   const label = selectedMonthKey === 'todos' ? 'Total (todos os períodos)' : 'Leads no período';
 
   const kpis = [
-    { label, num: total, filtro: null },
+    { label, num: total, filtro: 'periodo' },
     { label: 'Leads de parceria', num: parceria, filtro: 'parceria' },
     { label: 'Urgentes', num: urgentes.length, filtro: 'urgentes' },
     { label: 'Sem resposta', num: semResposta.length, filtro: 'sem-resposta' },
@@ -741,8 +744,63 @@ function renderKpis() {
   });
 }
 
+/* ---------- réus e painel de processos ---------- */
+function semAcento(t) { return (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
+function reuDoProcesso(p) {
+  const lead = leads.find(l => l.id === p.leadId) || {};
+  return ((p.banco || '') || ((lead.tipoProblema === 'Outro' && lead.outroReu) ? lead.outroReu : (lead.banco || ''))).trim() || '(réu não informado)';
+}
+function reuChave(nome) { return semAcento(nome).replace(/^banco\s+(do\s+|de\s+|da\s+)?/, '').replace(/[.,]/g, '').replace(/\s+s\s?a$/, '').trim(); }
+function ehAgibank(nome) { return reuChave(nome).includes('agibank') || reuChave(nome) === 'agi'; }
+function procAtivo(p) { const l = leads.find(x => x.id === p.leadId); return !!l && l.stage !== 'Encerrado' && l.stage !== 'Sem viabilidade jurídica'; }
+
+function openProcListModal(titulo, lista) {
+  const modalRoot = document.getElementById('modalRoot');
+  const linhas = lista.length ? lista.map(p => {
+    const l = leads.find(x => x.id === p.leadId) || {};
+    return `<div class="kpi-list-row" data-lead="${p.leadId}" style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer;">
+      <div><div style="font-weight:700; color:var(--navy); font-size:13.5px;">${escapeHtml(l.nome || '(sem nome)')}</div>
+      <div style="font-size:11.5px; color:#6b6459;">${escapeHtml(reuDoProcesso(p))}${p.descricao ? ' · ' + escapeHtml(p.descricao) : ''}${p.numero ? ' · ' + escapeHtml(p.numero) : ''}</div></div>
+      <div style="font-size:11px; color:var(--navy); text-align:right; max-width:170px;">${escapeHtml(p.etapa || STAGES_PROCESSO[0])}</div></div>`;
+  }).join('') : `<div class="column-empty" style="margin:14px;">Nenhum processo neste filtro.</div>`;
+  modalRoot.innerHTML = `
+    <div class="overlay" id="overlayProcList"><div class="modal" style="max-width:520px;">
+      <div class="modal-header"><h2>${titulo} (${lista.length})</h2><button class="close-x" id="closeProcList">&times;</button></div>
+      <div class="modal-body" style="padding:0;">${linhas}</div>
+      <div class="modal-footer"><div class="left"></div><div class="right"><button class="btn btn-ghost" id="cancelProcList">Fechar</button></div></div>
+    </div></div>`;
+  const close = () => { modalRoot.innerHTML = ''; };
+  document.getElementById('closeProcList').addEventListener('click', close);
+  document.getElementById('cancelProcList').addEventListener('click', close);
+  document.getElementById('overlayProcList').addEventListener('click', (e) => { if (e.target.id === 'overlayProcList') close(); });
+  modalRoot.querySelectorAll('.kpi-list-row').forEach(r => r.addEventListener('click', () => { close(); openModal(r.dataset.lead); }));
+}
+
+function renderKpisProcessos() {
+  const el = document.getElementById('kpiProcessos');
+  if (!el) return;
+  const ativos = processos.filter(procAtivo);
+  const clientes = new Set(processos.map(p => p.leadId));
+  const multi = [...clientes].filter(id => processos.filter(p => p.leadId === id).length > 1);
+  const agi = processos.filter(p => ehAgibank(reuDoProcesso(p)));
+  const demais = processos.filter(p => !ehAgibank(reuDoProcesso(p)));
+  const recurso = processos.filter(p => ['Embargos de Declaração', 'Apelação'].includes(p.etapa));
+  const kpis = [
+    { label: 'Processos ativos', num: ativos.length, titulo: '⚖️ Processos ativos', lista: ativos },
+    { label: 'Total cadastrados', num: processos.length, titulo: '🗂️ Todos os processos', lista: processos },
+    { label: 'Contra o Agibank', num: agi.length, titulo: '🏦 Processos contra o Agibank', lista: agi },
+    { label: 'Contra os demais réus', num: demais.length, titulo: '🏦 Processos contra os demais réus', lista: demais },
+    { label: 'Em recurso (embargos/apelação)', num: recurso.length, titulo: '📑 Processos em recurso', lista: recurso },
+    { label: 'Clientes com mais de 1 processo', num: multi.length, titulo: '👥 Processos de clientes com mais de 1 processo', lista: processos.filter(p => multi.includes(p.leadId)) },
+  ];
+  el.innerHTML = kpis.map((k, i) => `<div class="kpi" data-k="${i}" style="cursor:pointer;"><div class="num">${k.num}</div><div class="label">${escapeHtml(k.label)}</div></div>`).join('');
+  el.querySelectorAll('.kpi').forEach(c => c.addEventListener('click', () => { const k = kpis[+c.dataset.k]; openProcListModal(k.titulo, k.lista); }));
+}
+
 function openKpiListModal(filtro, periodo) {
+  const tituloPeriodo = selectedMonthKey === 'todos' ? '📅 Leads de todos os períodos' : '📅 Leads criados em ' + monthLabel(selectedMonthKey);
   const config = {
+    'periodo': { titulo: tituloPeriodo, leads: periodo.slice().sort((a, b) => new Date(b.dataCriacao) - new Date(a.dataCriacao)), detalhe: l => l.dataCriacao ? 'Criado em ' + new Date(l.dataCriacao).toLocaleDateString('pt-BR') : '' },
     'parceria': { titulo: '🤝 Leads de parceria', leads: periodo.filter(l => l.temParceiro === 'Sim'), detalhe: l => [l.parceiroNome, l.parceiroOab].filter(Boolean).join(' · ') },
     'urgentes': { titulo: '🔴 Leads urgentes', leads: periodo.filter(l => (l.tags || []).some(t => t.startsWith('urgente'))), detalhe: l => (l.tags || []).filter(t => t.startsWith('urgente')).map(t => '#' + t).join(' ') },
     'sem-resposta': { titulo: '⏳ Leads sem resposta', leads: periodo.filter(l => (l.tags || []).includes('sem-resposta')), detalhe: () => '' },
@@ -908,6 +966,12 @@ function renderDashboard() {
         <p class="dash-sub">Participação de leads em parceria no período</p>
         <div class="chart-wrap"><canvas id="chartParceria"></canvas></div>
       </div>
+      <div class="dash-card span-2" id="reuCard">
+        <h3>⚖️ Processos por réu</h3>
+        <p class="dash-sub" id="reuSub"></p>
+        <div class="kpis" id="reuTiles" style="padding:0 0 14px; border:none; background:transparent;"></div>
+        <div class="chart-wrap"><canvas id="chartReu"></canvas></div>
+      </div>
       <div class="dash-card span-2" id="mapaCard">
         <h3>🗺️ Nossos clientes pelo Brasil</h3>
         <p class="dash-sub" id="mapaResumo">Todas as cidades já atendidas, independente da aba selecionada acima</p>
@@ -971,6 +1035,34 @@ function renderDashboard() {
     type: 'doughnut',
     data: { labels: ['Em parceria', 'Sem parceria'], datasets: [{ data: [comParceria, semParceria], backgroundColor: ['#C5A483', '#DDD5C8'] }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } },
+  });
+
+  // Processos por réu (processos dos leads do período)
+  const idsPeriodo = new Set(periodo.map(l => l.id));
+  const procPeriodo = processos.filter(p => idsPeriodo.has(p.leadId));
+  const grupos = {};
+  procPeriodo.forEach(p => { const nome = reuDoProcesso(p); const k = reuChave(nome); (grupos[k] = grupos[k] || { nome, itens: [] }).itens.push(p); });
+  const ordenados = Object.values(grupos).sort((a, b) => b.itens.length - a.itens.length);
+  const top = ordenados.slice(0, 10);
+  const resto = ordenados.slice(10).reduce((n, g) => n + g.itens.length, 0);
+  const labelsReu = top.map(g => g.nome).concat(resto ? ['Demais'] : []);
+  const dadosReu = top.map(g => g.itens.length).concat(resto ? [resto] : []);
+  const agiP = procPeriodo.filter(p => ehAgibank(reuDoProcesso(p)));
+  const demP = procPeriodo.filter(p => !ehAgibank(reuDoProcesso(p)));
+  const semProc = periodo.filter(l => !processos.some(p => p.leadId === l.id)).length;
+  document.getElementById('reuSub').textContent = `Baseado nos processos cadastrados dos leads do período${semProc ? ' · ' + semProc + ' lead(s) ainda sem processo cadastrado não entram' : ''}`;
+  const tiles = [
+    { label: 'Contra o Agibank', num: agiP.length, titulo: '🏦 Processos contra o Agibank', lista: agiP },
+    { label: 'Contra os demais réus', num: demP.length, titulo: '🏦 Processos contra os demais réus', lista: demP },
+    { label: 'Total de processos', num: procPeriodo.length, titulo: '🗂️ Todos os processos do período', lista: procPeriodo },
+  ];
+  const tilesEl = document.getElementById('reuTiles');
+  tilesEl.innerHTML = tiles.map((k, i) => `<div class="kpi" data-k="${i}" style="cursor:pointer;"><div class="num">${k.num}</div><div class="label">${escapeHtml(k.label)}</div></div>`).join('');
+  tilesEl.querySelectorAll('.kpi').forEach(c => c.addEventListener('click', () => { const k = tiles[+c.dataset.k]; openProcListModal(k.titulo, k.lista); }));
+  dashCharts.reu = new Chart(document.getElementById('chartReu'), {
+    type: 'bar',
+    data: { labels: labelsReu, datasets: [{ data: dadosReu, backgroundColor: labelsReu.map(n => ehAgibank(n) ? '#15253F' : '#C5A483'), borderRadius: 4 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
   });
 
   renderMapaClientes();
@@ -1097,6 +1189,7 @@ function cardHtml(lead) {
           <div class="name">${escapeHtml(lead.nome || '(sem nome)')}</div>
           <div class="meta">${escapeHtml(problemaLabel)}</div>
           <div class="meta">${escapeHtml(lead.banco || '')} ${lead.banco ? '·' : ''} ${daysAgo(lead.ultimaAtualizacao)}</div>
+          ${lead.dataCriacao ? `<div class="meta">📅 Criado em ${new Date(lead.dataCriacao).toLocaleDateString('pt-BR')}</div>` : ''}
         </div>
       </div>
       <div class="tags">${followupHtml}${parceiroHtml}${tagsHtml}</div>
@@ -1147,6 +1240,7 @@ function attachBoardEvents() {
 function renderBoardProcessos() {
   const board = document.getElementById('boardProcessos');
   if (!board) return;
+  renderKpisProcessos();
 
   if (processos.length === 0) {
     board.innerHTML = `
@@ -1300,6 +1394,7 @@ function openModal(id) {
         <div class="modal-body">
           <div class="form-grid">
             <div class="form-row full"><label>Nome completo</label><input id="f_nome" autocomplete="off" value="${escapeHtml(lead.nome)}" placeholder="Nome do cliente"></div>
+            ${(!isNew && lead.dataCriacao) ? `<div class="form-row full"><small>📅 Lead criado em ${new Date(lead.dataCriacao).toLocaleDateString('pt-BR')} às ${new Date(lead.dataCriacao).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}${lead.criadoPor ? ' · por ' + escapeHtml(lead.criadoPor) : ''}</small></div>` : ''}
             ${lead.driveFolderUrl ? `<div class="form-row full"><a href="${escapeHtml(lead.driveFolderUrl)}" target="_blank" rel="noopener" class="btn btn-ghost" style="display:inline-block; text-decoration:none;">📁 Abrir pasta no Google Drive</a></div>` : ''}
             ${(lead.stage === 'Sem viabilidade jurídica' && lead.driveFolderUrl) ? `<div class="form-row full"><button type="button" class="btn btn-ghost" id="btnApagarPasta">🗑️ Apagar pasta do Drive (o lead continua no CRM)</button></div>` : ''}
             ${lead.driveFolderStatus ? `<div class="form-row full"><small>📁 Pasta do Drive: ${escapeHtml(lead.driveFolderStatus)}</small></div>` : ''}
@@ -1442,9 +1537,11 @@ function openModal(id) {
 
             <div class="form-row full" style="margin-top: 4px;">
               <label>Gerar documentos (abre tela de revisão — Word ou PDF)</label>
+              <div id="docProcWrap" style="display:none; margin-bottom:8px;"><label style="font-size:11.5px;">Processo a que a procuração e o contrato se referem</label><select id="f_docProcesso"></select></div>
               <div style="display:flex; flex-wrap:wrap; gap: 8px;">
                 <button type="button" class="btn btn-ghost" id="btnGerarProcuracao">📜 Procuração</button>
                 <button type="button" class="btn btn-ghost" id="btnGerarHipossuficiencia">📝 Declaração de Hipossuficiência</button>
+                <button type="button" class="btn btn-ghost" id="btnGerarResidencia">🏠 Declaração de Residência</button>
                 <button type="button" class="btn btn-ghost" id="btnGerarContrato">📑 Contrato de Honorários</button>
                 <button type="button" class="btn btn-ghost" id="btnGerarFicha">🗂️ Ficha de Atendimento</button>
               </div>
@@ -1518,18 +1615,27 @@ function openModal(id) {
         </div>
       </div>`).join('') : '<p style="font-size:12px; color:#6b6459;">Nenhum processo cadastrado ainda.</p>';
     box.querySelectorAll('[data-k]').forEach(el => {
-      const h = () => { modalProcWork[+el.dataset.i][el.dataset.k] = el.value; };
+      const h = () => { modalProcWork[+el.dataset.i][el.dataset.k] = el.value; if (window.atualizarSeletorProcessoDoc) window.atualizarSeletorProcessoDoc(); };
       el.addEventListener('input', h); el.addEventListener('change', h);
     });
     box.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => {
       if (!confirm('Remover este processo do cliente? O cliente continua no CRM.')) return;
-      modalProcWork.splice(+b.dataset.rm, 1); renderProcList();
+      modalProcWork.splice(+b.dataset.rm, 1); renderProcList(); if (window.atualizarSeletorProcessoDoc) window.atualizarSeletorProcessoDoc();
     }));
   };
+  window.atualizarSeletorProcessoDoc = () => {
+    const wrap = document.getElementById('docProcWrap'), sel = document.getElementById('f_docProcesso');
+    if (!wrap || !sel) return;
+    const atual = sel.value;
+    sel.innerHTML = modalProcWork.map((p, i) => `<option value="${i}">${escapeHtml('Processo ' + (i + 1) + (p.descricao ? ' — ' + p.descricao : (p.banco ? ' — ' + p.banco : '')))}</option>`).join('');
+    if (atual !== '' && +atual < modalProcWork.length) sel.value = atual;
+    wrap.style.display = modalProcWork.length > 1 ? '' : 'none';
+  };
   renderProcList();
+  window.atualizarSeletorProcessoDoc();
   document.getElementById('btnAddProcesso').addEventListener('click', () => {
     modalProcWork.push({ id: null, descricao: '', banco: (document.getElementById('f_banco') || {}).value || '', numero: '', vara: '', andamento: '', etapa: STAGES_PROCESSO[0], tipoProblema: (document.getElementById('f_tipoProblema') || {}).value || '' });
-    renderProcList();
+    renderProcList(); if (window.atualizarSeletorProcessoDoc) window.atualizarSeletorProcessoDoc();
   });
   document.getElementById('f_temHonorariosIniciais').addEventListener('change', (e) => {
     document.getElementById('honorariosIniciaisWrap').style.display = e.target.value === 'Sim' ? 'block' : 'none';
@@ -1569,6 +1675,7 @@ function openModal(id) {
   }
   document.getElementById('btnGerarProcuracao').addEventListener('click', () => gerarComAvisoParceria('procuracao', 'a procuração'));
   document.getElementById('btnGerarHipossuficiencia').addEventListener('click', () => gerarDocumento('hipossuficiencia', readFormIntoLead(lead)));
+  document.getElementById('btnGerarResidencia').addEventListener('click', () => gerarDocumento('residencia', readFormIntoLead(lead)));
   document.getElementById('btnGerarContrato').addEventListener('click', () => gerarComAvisoParceria('contrato', 'o contrato'));
   document.getElementById('btnGerarFicha').addEventListener('click', () => gerarDocumento('ficha', readFormIntoLead(lead)));
 
@@ -1877,8 +1984,9 @@ function gerarDocumento(tipo, lead) {
 
   function ajustarGenero(texto, sexo) {
     if (!texto) return '';
-    if (sexo === 'Feminino') return texto.replace(/\(a\)/gi, 'a').replace(/\(o\)/gi, '');
-    if (sexo === 'Masculino') return texto.replace(/\(a\)/gi, '').replace(/\(o\)/gi, 'o');
+    // aceita tanto "brasileiro(a)" quanto "brasileira(o)": a vogal final é trocada, não somada
+    if (sexo === 'Feminino') return texto.replace(/o\(a\)/gi, 'a').replace(/a\(o\)/gi, 'a').replace(/\(a\)/gi, 'a').replace(/\(o\)/gi, '');
+    if (sexo === 'Masculino') return texto.replace(/a\(o\)/gi, 'o').replace(/o\(a\)/gi, 'o').replace(/\(a\)/gi, '').replace(/\(o\)/gi, 'o');
     return texto;
   }
   const portadorTxt = lead.sexo === 'Feminino' ? 'portadora' : lead.sexo === 'Masculino' ? 'portador' : 'portador(a)';
@@ -1891,7 +1999,19 @@ function gerarDocumento(tipo, lead) {
     .filter(Boolean)
     .map(t => escapeHtml(t));
 
-  const objeto = lead.tipoProblema === 'Outro' && lead.outroDescricao ? lead.outroDescricao : lead.tipoProblema;
+  // Procuração e contrato mencionam apenas "ação de conhecimento contra o Banco X" (o problema do caso fica só no CRM)
+  let bancoDoc = (lead.banco || '').trim();
+  const selProc = document.getElementById('f_docProcesso');
+  const procsDoc = lead.processos || [];
+  if (selProc && selProc.value !== '' && procsDoc[+selProc.value] && procsDoc[+selProc.value].banco) bancoDoc = procsDoc[+selProc.value].banco.trim();
+  else if (!bancoDoc && procsDoc.length === 1 && procsDoc[0].banco) bancoDoc = procsDoc[0].banco.trim();
+  const bancoComArtigo = (() => {
+    const b = bancoDoc;
+    if (!b) return '';
+    if (/^banco\b/i.test(b)) return 'o ' + b;
+    if (/^caixa\b/i.test(b)) return 'a ' + b;
+    return 'o Banco ' + b;
+  })();
 
   // texto do(a) parceiro(a), para entrar ao lado do nome da advogada (não como cláusula separada)
   function parceiroAoLadoDoNome() {
@@ -1973,7 +2093,7 @@ function gerarDocumento(tipo, lead) {
         return pJust(`<strong>OUTORGANTE: ${escapeHtml(lead.nome).toUpperCase()},</strong> ${frag.join(', ')}.`);
       })()}
       ${pJust(`<strong>${rotuloOutorgado}: LORENA MARANGON MANTOVANI,</strong> brasileira, advogada, inscrita na OAB/${ESCRITORIO_OAB_UF} sob o n° ${ESCRITORIO_OAB}, com endereço eletrônico: ${ESCRITORIO_EMAIL}${parceiroAoLadoDoNome()}.`)}
-      ${pJust(`OBJETO: Representar o Outorgante, promovendo a defesa dos seus direitos e interesses, podendo, para tanto, propor quaisquer ações, medidas incidentais, acompanhar os processos administrativos e/ou judiciais em qualquer Juízo, Instância, Tribunal, ou Repartição Pública${objeto ? ', especialmente relacionados a ' + escapeHtml(objeto) + (lead.banco ? ' junto a(o) ' + escapeHtml(lead.banco) : '') : ''}.`)}
+      ${pJust(`OBJETO: Representar o Outorgante, promovendo a defesa dos seus direitos e interesses, podendo, para tanto, propor quaisquer ações, medidas incidentais, acompanhar os processos administrativos e/ou judiciais em qualquer Juízo, Instância, Tribunal, ou Repartição Pública${bancoComArtigo ? ', especialmente para ação de conhecimento contra ' + escapeHtml(bancoComArtigo) : ''}.`)}
       ${pJust('PODERES: Por este instrumento particular de procuração, constitui meus bastantes procuradores os outorgados, concedendo-lhe os poderes inerentes da cláusula ad judicia et extra, para o foro em geral, podendo, portanto, promover quaisquer medidas judiciais ou administrativas, assinar termo, oferecer defesa, direta ou indireta, interpor recursos, ajuizar ações e conduzir os respectivos processos, solicitar, providenciar e ter acesso a documentos de qualquer natureza, sendo o presente instrumento de mandato oneroso e contratual podendo substabelecer este a outrem, com ou sem reserva de poderes, dando tudo por bom e valioso, a fim de praticar todos os demais atos necessários ao fiel desempenho deste mandato.')}
       ${pJust('PODERES ESPECÍFICOS: A presente procuração outorga a advogada acima descrita, os poderes especiais para receber citação, confessar, reconhecer a procedência do pedido, transigir, desistir, renunciar ao direito sobre que se funda a ação, firmar compromissos ou acordos, receber valores, dar e receber quitação, levantar ou receber RPV e ALVARÁS, pedir justiça gratuita e assinar a declaração de hipossuficiência econômica, em conformidade com a norma do art. 105 da Lei 13.105/2015.')}
       ${blocoAssinatura('OUTORGANTE')}
@@ -1995,6 +2115,31 @@ function gerarDocumento(tipo, lead) {
     `);
   }
 
+  if (tipo === 'residencia') {
+    if (!checarDadosMinimos(lead, [['nome','Nome'],['cpf','CPF'],['enderecoCompleto','Endereço completo']])) return;
+    const UF_DE = { AC:'do Acre', AL:'de Alagoas', AP:'do Amapá', AM:'do Amazonas', BA:'da Bahia', CE:'do Ceará', DF:'do Distrito Federal', ES:'do Espírito Santo', GO:'de Goiás', MA:'do Maranhão', MT:'de Mato Grosso', MS:'de Mato Grosso do Sul', MG:'de Minas Gerais', PA:'do Pará', PB:'da Paraíba', PR:'do Paraná', PE:'de Pernambuco', PI:'do Piauí', RJ:'do Rio de Janeiro', RN:'do Rio Grande do Norte', RS:'do Rio Grande do Sul', RO:'de Rondônia', RR:'de Roraima', SC:'de Santa Catarina', SP:'de São Paulo', SE:'de Sergipe', TO:'do Tocantins' };
+    const [cidadeRes, ufRes] = (lead.cidadeUf || '').split('/').map(x => (x || '').trim());
+    const endTxt = (lead.enderecoCompleto || '').trim().replace(/[.,;\s]+$/, '');
+    const jaTemCidade = cidadeRes && endTxt.toLowerCase().includes(cidadeRes.toLowerCase());
+    const estadoTxt = (ufRes && UF_DE[ufRes.toUpperCase()]) ? ', Estado ' + UF_DE[ufRes.toUpperCase()] : '';
+    const sufixoMunicipio = (cidadeRes && !jaTemCidade) ? `, no Município de ${escapeHtml(cidadeRes)}${estadoTxt}` : '';
+    const qualifRes = [lead.nacionalidade, lead.profissao].map(t => ajustarGenero((t || '').trim(), lead.sexo)).filter(Boolean).map(t => escapeHtml(t));
+    const fragRes = [...qualifRes, `${inscritoTxt} no CPF sob o nº ${escapeHtml(lead.cpf)}`];
+    const linhaAssinatura = lead.analfabeto === 'Sim' ? '' : `
+      <div style="margin-top:40px; text-align:center;">
+        <div style="width:360px; border-top:1px solid #000; margin:0 auto; padding-top:4px;">
+          <strong>${escapeHtml((lead.nome || '').toUpperCase())}</strong><br>CPF ${escapeHtml(lead.cpf || '')}
+        </div>
+      </div>`;
+    html = docWrapper(`
+      ${pTitle('DECLARAÇÃO DE RESIDÊNCIA')}
+      ${pJust(`Eu, <strong>${escapeHtml(lead.nome).toUpperCase()}</strong>, ${fragRes.join(', ')}, declaro, para os devidos fins de direito e comprovação de domicílio, que resido à ${escapeHtml(endTxt)}${sufixoMunicipio}.`)}
+      ${pJust('Por ser a expressão da verdade, firmo a presente declaração para efeitos legais, ciente de que a falsidade da declaração sujeita o declarante às sanções civis, administrativas e criminais previstas na legislação aplicável.')}
+      ${blocoAssinatura('DECLARANTE')}
+      ${linhaAssinatura}
+    `);
+  }
+
   if (tipo === 'contrato') {
     if (!checarDadosMinimos(lead, [['nome','Nome'],['cpf','CPF'],['enderecoCompleto','Endereço completo']])) return;
 
@@ -2012,7 +2157,7 @@ function gerarDocumento(tipo, lead) {
       ${pJust('As partes acima identificadas têm, entre si, justo e acertado o presente Contrato de Honorários Advocatícios, que se regerá pelas cláusulas seguintes e pelas condições descritas no presente.')}
 
       ${pClause('DO OBJETO DO CONTRATO')}
-      ${pJust(`<strong>Cláusula 1ª:</strong> O presente instrumento tem como objeto a prestação de serviços advocatícios, consistentes na atuação na ação de conhecimento a ser proposta em face do(a) <strong>${escapeHtml(objeto || '[objeto do caso]')}${lead.banco ? ' — ' + escapeHtml(lead.banco) : ''}</strong>, abrangendo a defesa da parte contratante em todos os atos necessários ao regular andamento do processo.`)}
+      ${pJust(`<strong>Cláusula 1ª:</strong> O presente instrumento tem como objeto a prestação de serviços advocatícios, consistentes na atuação na ação de conhecimento a ser proposta em face d<strong>${escapeHtml(bancoComArtigo || 'o Banco [nome do banco]')}</strong>, abrangendo a defesa da parte contratante em todos os atos necessários ao regular andamento do processo.`)}
 
       ${pClause('DAS ATIVIDADES')}
       ${pJust('<strong>Cláusula 2ª:</strong> As atividades inclusas na prestação de serviço objeto deste instrumento são todas aquelas inerentes à profissão, ou seja, todos os atos inerentes ao exercício da advocacia e aqueles constantes no Estatuto da Ordem dos Advogados do Brasil, bem como os especificados no instrumento de mandato.')}
@@ -2147,7 +2292,7 @@ function gerarDocumento(tipo, lead) {
     `);
   }
 
-  const tituloDoc = { procuracao: 'Procuração', hipossuficiencia: 'Declaração de Hipossuficiência', contrato: 'Contrato de Honorários', ficha: 'Ficha de Atendimento' }[tipo] || 'Documento';
+  const tituloDoc = { procuracao: 'Procuração', hipossuficiencia: 'Declaração de Hipossuficiência', residencia: 'Declaração de Residência', contrato: 'Contrato de Honorários', ficha: 'Ficha de Atendimento' }[tipo] || 'Documento';
   showDocPreview(tituloDoc, html, lead);
 }
 
