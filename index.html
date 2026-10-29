@@ -2809,15 +2809,13 @@ function renderPrazos() {
   if (prazosCliente) linhas = linhas.filter(l => l.lead.id === prazosCliente);
   const nomeCliente = (clientesComDados.find(c => c[0] === prazosCliente) || [])[1] || '';
   total = linhas.length;
-  const naoLidas = linhas.filter(l => !lidos.has(chavePublicacao(l))).length;
-  if (prazosFiltro === 'naolidos') linhas = linhas.filter(l => !lidos.has(chavePublicacao(l)));
   if (prazosFiltro === 'prazo') linhas = linhas.filter(l => l.venc);
   if (prazosFiltro === 'abertos') linhas = linhas.filter(l => l.venc && l.venc >= hoje);
   if (prazosCliente) linhas.sort((a, b) => (b.it.data || '').localeCompare(a.it.data || ''));   // histórico: mais recente primeiro
   else linhas.sort((a, b) => (a.venc && b.venc) ? a.venc.localeCompare(b.venc) : a.venc ? -1 : b.venc ? 1 : (b.it.data || '').localeCompare(a.it.data || ''));
   const corVenc = v => !v ? '' : v < hoje ? 'color:#8a8a8a;' : v <= addDiasUteis(hoje, 3) ? 'color:var(--red); font-weight:700;' : v <= addDiasUteis(hoje, 7) ? 'color:#b36b00; font-weight:700;' : 'color:var(--green); font-weight:700;';
   const abertos = linhas.filter(l => l.venc && l.venc >= hoje).length;
-  const filtros = [['todos', 'Todas as publicações'], ['naolidos', 'Não lidas'], ['prazo', 'Com prazo identificado'], ['abertos', 'Prazos em aberto']];
+  const filtros = [['todos', 'Todas as publicações'], ['prazo', 'Com prazo identificado'], ['abertos', 'Prazos em aberto']];
   el.innerHTML = `
     <div style="padding:18px 26px;">
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
@@ -2828,7 +2826,7 @@ function renderPrazos() {
         <span style="font-size:12px; color:#6b6459;">${escapeHtml(prazosMsg)}</span>
       </div>
       <div style="font-size:12px; color:#6b6459; margin-bottom:10px;">
-        ${total} publicação(ões) · ${naoLidas} não lida(s) · ${abertos} prazo(s) em aberto. O vencimento é uma <b>estimativa</b> (dias úteis a partir da disponibilização, sem considerar feriados e suspensões) calculada pelo "prazo de N dias" encontrado no teor — sempre confira no processo.
+        ${total} publicação(ões) · ${abertos} prazo(s) em aberto. O vencimento é uma <b>estimativa</b> (dias úteis a partir da disponibilização, sem considerar feriados e suspensões) calculada pelo "prazo de N dias" encontrado no teor — sempre confira no processo.
         ${semNumero.length ? `<br>⚠️ ${semNumero.length} processo(s) ativo(s) sem número CNJ válido (20 dígitos) não foram consultados.` : ''}
       </div>
       ${prazosCliente ? `<div style="background:var(--white); border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px;">
@@ -2836,9 +2834,8 @@ function renderPrazos() {
         ${procsCliente.map(x => `<div style="margin-top:4px;">⚖️ ${escapeHtml(x.numero)} · ${escapeHtml([x.tribunal, x.orgao].filter(Boolean).join(' · ') || 'tribunal não informado')}</div>`).join('')}
       </div>` : ''}
       ${linhas.length ? `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:12.5px; background:var(--white);">
-        <thead><tr style="background:var(--navy); color:white; text-align:left;">${['Lido', 'Cliente', 'Processo / Tribunal', 'Órgão', 'Tipo', 'Disponibilizada', 'Prazo', 'Vence em (est.)', 'Situação', 'Teor'].map(h => `<th style="padding:8px 10px;">${h}</th>`).join('')}</tr></thead>
-        <tbody>${linhas.map(l => `<tr style="border-bottom:1px solid var(--border); vertical-align:top;${lidos.has(chavePublicacao(l)) ? ' opacity:0.55;' : ''}">
-          <td style="padding:8px 10px; text-align:center;"><input type="checkbox" class="chkLido" data-k="${escapeHtml(chavePublicacao(l))}" ${lidos.has(chavePublicacao(l)) ? 'checked' : ''} title="Marcar como lido" style="width:17px; height:17px; cursor:pointer;"></td>
+        <thead><tr style="background:var(--navy); color:white; text-align:left;">${['Cliente', 'Processo / Tribunal', 'Órgão', 'Tipo', 'Disponibilizada', 'Prazo', 'Vence em (est.)', 'Situação', 'Teor', 'Li?'].map(h => `<th style="padding:8px 10px;">${h}</th>`).join('')}</tr></thead>
+        <tbody>${linhas.map(l => `<tr style="border-bottom:1px solid var(--border); vertical-align:top;">
           <td style="padding:8px 10px;"><b>${escapeHtml(l.lead.nome || '—')}</b></td>
           <td style="padding:8px 10px; white-space:nowrap;">${escapeHtml(l.p.numero)}<div style="font-size:11px; color:#6b6459;">${escapeHtml(l.it.tribunal || '—')}</div></td>
           <td style="padding:8px 10px;">${escapeHtml([l.it.tribunal, l.it.orgao].filter(Boolean).join(' · '))}</td>
@@ -2848,6 +2845,7 @@ function renderPrazos() {
           <td style="padding:8px 10px; white-space:nowrap; ${corVenc(l.venc)}">${l.venc ? fmtData(l.venc) : '—'}</td>
           <td style="padding:8px 10px; white-space:nowrap;">${!l.venc ? 'Sem prazo' : l.venc < hoje ? 'Vencido' : 'Em aberto'}</td>
           <td style="padding:8px 10px; max-width:420px;"><details><summary style="cursor:pointer;">Ver teor</summary><div style="white-space:pre-wrap; margin-top:6px;">${escapeHtml((l.it.texto || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())}</div>${l.it.link ? `<a href="${escapeHtml(l.it.link)}" target="_blank" rel="noopener">Abrir no DJEN</a>` : ''}</details></td>
+          <td style="padding:8px 10px; text-align:center;"><input type="checkbox" class="chkLido" data-k="${escapeHtml(chavePublicacao(l))}" ${lidos.has(chavePublicacao(l)) ? 'checked' : ''} title="Marcar como lido" style="width:17px; height:17px; cursor:pointer;"></td>
         </tr>`).join('')}</tbody></table></div>`
       : `<div class="empty-state"><div class="icon">⏰</div><h2>Nenhuma publicação para mostrar</h2><p>Clique em "Buscar prazos no DJEN" para consultar os processos ativos cadastrados no CRM.</p></div>`}
     </div>`;
@@ -2856,7 +2854,6 @@ function renderPrazos() {
     const set = lidosLoad();
     if (c.checked) set.add(c.dataset.k); else set.delete(c.dataset.k);
     lidosSave(set);
-    renderPrazos();
   }));
   document.getElementById('prazosCliente').addEventListener('change', (e) => { prazosCliente = e.target.value; renderPrazos(); });
   document.getElementById('prazosFiltro').addEventListener('change', (e) => { prazosFiltro = e.target.value; renderPrazos(); });
