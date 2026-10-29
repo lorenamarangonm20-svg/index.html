@@ -2716,7 +2716,7 @@ async function exportToPdf() {
 // ---------- PRAZOS (DJEN) ----------
 const DJEN_API = 'https://comunicaapi.pje.jus.br/api/v1/comunicacao';
 const DJEN_CACHE_KEY = 'crm_djen_v1';
-let prazosBusy = false, prazosFiltro = 'todos', prazosMsg = '';
+let prazosBusy = false, prazosFiltro = 'todos', prazosMsg = '', prazosCliente = '';
 function djenCacheLoad() { try { return JSON.parse(localStorage.getItem(DJEN_CACHE_KEY)) || {}; } catch (e) { return {}; } }
 function djenCacheSave(c) { try { localStorage.setItem(DJEN_CACHE_KEY, JSON.stringify(c)); } catch (e) {} }
 function soDigitos(n) { return (n || '').replace(/\D/g, ''); }
@@ -2793,10 +2793,21 @@ function renderPrazos() {
       linhas.push({ p, lead, it, dias, venc });
     });
   });
-  const total = linhas.length;
+  let total = linhas.length;
+  const clientesComDados = [...new Map(linhas.map(l => [l.lead.id, l.lead.nome || '(sem nome)'])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
+  if (prazosCliente && !clientesComDados.some(c => c[0] === prazosCliente)) prazosCliente = '';
+  // processos do cliente selecionado (número + tribunal), para o cabeçalho
+  const procsCliente = prazosCliente ? processos.filter(p => p.leadId === prazosCliente && cache[soDigitos(p.numero)]).map(p => {
+    const it0 = (cache[soDigitos(p.numero)].itens || [])[0] || {};
+    return { numero: p.numero, tribunal: it0.tribunal || '', orgao: it0.orgao || '' };
+  }) : [];
+  if (prazosCliente) linhas = linhas.filter(l => l.lead.id === prazosCliente);
+  const nomeCliente = (clientesComDados.find(c => c[0] === prazosCliente) || [])[1] || '';
+  total = linhas.length;
   if (prazosFiltro === 'prazo') linhas = linhas.filter(l => l.venc);
   if (prazosFiltro === 'abertos') linhas = linhas.filter(l => l.venc && l.venc >= hoje);
-  linhas.sort((a, b) => (a.venc && b.venc) ? a.venc.localeCompare(b.venc) : a.venc ? -1 : b.venc ? 1 : (b.it.data || '').localeCompare(a.it.data || ''));
+  if (prazosCliente) linhas.sort((a, b) => (b.it.data || '').localeCompare(a.it.data || ''));   // histórico: mais recente primeiro
+  else linhas.sort((a, b) => (a.venc && b.venc) ? a.venc.localeCompare(b.venc) : a.venc ? -1 : b.venc ? 1 : (b.it.data || '').localeCompare(a.it.data || ''));
   const corVenc = v => !v ? '' : v < hoje ? 'color:#8a8a8a;' : v <= addDiasUteis(hoje, 3) ? 'color:var(--red); font-weight:700;' : v <= addDiasUteis(hoje, 7) ? 'color:#b36b00; font-weight:700;' : 'color:var(--green); font-weight:700;';
   const abertos = linhas.filter(l => l.venc && l.venc >= hoje).length;
   const filtros = [['todos', 'Todas as publicações'], ['prazo', 'Com prazo identificado'], ['abertos', 'Prazos em aberto']];
@@ -2805,6 +2816,7 @@ function renderPrazos() {
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
         <h2 style="margin:0; font-size:18px; color:var(--navy);">⏰ Prazos — publicações no DJEN</h2>
         <button class="btn btn-gold" id="btnBuscarDjen" ${prazosBusy ? 'disabled' : ''}>🔄 Buscar prazos no DJEN</button>
+        <select id="prazosCliente"><option value="">Todos os clientes</option>${clientesComDados.map(c => `<option value="${escapeHtml(c[0])}" ${c[0] === prazosCliente ? 'selected' : ''}>${escapeHtml(c[1])}</option>`).join('')}</select>
         <select id="prazosFiltro">${filtros.map(f => `<option value="${f[0]}" ${f[0] === prazosFiltro ? 'selected' : ''}>${f[1]}</option>`).join('')}</select>
         <span style="font-size:12px; color:#6b6459;">${escapeHtml(prazosMsg)}</span>
       </div>
@@ -2812,21 +2824,27 @@ function renderPrazos() {
         ${total} publicação(ões) · ${abertos} prazo(s) em aberto. O vencimento é uma <b>estimativa</b> (dias úteis a partir da disponibilização, sem considerar feriados e suspensões) calculada pelo "prazo de N dias" encontrado no teor — sempre confira no processo.
         ${semNumero.length ? `<br>⚠️ ${semNumero.length} processo(s) ativo(s) sem número CNJ válido (20 dígitos) não foram consultados.` : ''}
       </div>
+      ${prazosCliente ? `<div style="background:var(--white); border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px;">
+        <b style="color:var(--navy);">${escapeHtml(nomeCliente)}</b> — histórico de publicações e prazos (mais recente primeiro)
+        ${procsCliente.map(x => `<div style="margin-top:4px;">⚖️ ${escapeHtml(x.numero)} · ${escapeHtml([x.tribunal, x.orgao].filter(Boolean).join(' · ') || 'tribunal não informado')}</div>`).join('')}
+      </div>` : ''}
       ${linhas.length ? `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:12.5px; background:var(--white);">
-        <thead><tr style="background:var(--navy); color:white; text-align:left;">${['Cliente', 'Processo', 'Órgão', 'Tipo', 'Disponibilizada', 'Prazo', 'Vence em (est.)', 'Teor'].map(h => `<th style="padding:8px 10px;">${h}</th>`).join('')}</tr></thead>
+        <thead><tr style="background:var(--navy); color:white; text-align:left;">${['Cliente', 'Processo / Tribunal', 'Órgão', 'Tipo', 'Disponibilizada', 'Prazo', 'Vence em (est.)', 'Situação', 'Teor'].map(h => `<th style="padding:8px 10px;">${h}</th>`).join('')}</tr></thead>
         <tbody>${linhas.map(l => `<tr style="border-bottom:1px solid var(--border); vertical-align:top;">
           <td style="padding:8px 10px;"><b>${escapeHtml(l.lead.nome || '—')}</b></td>
-          <td style="padding:8px 10px; white-space:nowrap;">${escapeHtml(l.p.numero)}</td>
+          <td style="padding:8px 10px; white-space:nowrap;">${escapeHtml(l.p.numero)}<div style="font-size:11px; color:#6b6459;">${escapeHtml(l.it.tribunal || '—')}</div></td>
           <td style="padding:8px 10px;">${escapeHtml([l.it.tribunal, l.it.orgao].filter(Boolean).join(' · '))}</td>
           <td style="padding:8px 10px;">${escapeHtml(l.it.tipo)}</td>
           <td style="padding:8px 10px; white-space:nowrap;">${fmtData(l.it.data)}</td>
           <td style="padding:8px 10px;">${l.dias ? l.dias + ' dias' : '—'}</td>
           <td style="padding:8px 10px; white-space:nowrap; ${corVenc(l.venc)}">${l.venc ? fmtData(l.venc) : '—'}</td>
+          <td style="padding:8px 10px; white-space:nowrap;">${!l.venc ? 'Sem prazo' : l.venc < hoje ? 'Vencido' : 'Em aberto'}</td>
           <td style="padding:8px 10px; max-width:420px;"><details><summary style="cursor:pointer;">Ver teor</summary><div style="white-space:pre-wrap; margin-top:6px;">${escapeHtml((l.it.texto || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())}</div>${l.it.link ? `<a href="${escapeHtml(l.it.link)}" target="_blank" rel="noopener">Abrir no DJEN</a>` : ''}</details></td>
         </tr>`).join('')}</tbody></table></div>`
       : `<div class="empty-state"><div class="icon">⏰</div><h2>Nenhuma publicação para mostrar</h2><p>Clique em "Buscar prazos no DJEN" para consultar os processos ativos cadastrados no CRM.</p></div>`}
     </div>`;
   document.getElementById('btnBuscarDjen').addEventListener('click', buscarPrazosDjen);
+  document.getElementById('prazosCliente').addEventListener('change', (e) => { prazosCliente = e.target.value; renderPrazos(); });
   document.getElementById('prazosFiltro').addEventListener('change', (e) => { prazosFiltro = e.target.value; renderPrazos(); });
 }
 
