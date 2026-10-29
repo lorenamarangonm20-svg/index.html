@@ -506,6 +506,7 @@ function renderAppShell() {
       <div class="view-toggle" id="viewToggle">
         <button type="button" data-view="quadro" class="active">📋 Quadro</button>
         <button type="button" data-view="processos">⚖️ Processos</button>
+        <button type="button" data-view="prazos">⏰ Prazos</button>
         <button type="button" data-view="dashboard">📊 Dashboard</button>
       </div>
     </div>
@@ -513,6 +514,7 @@ function renderAppShell() {
     <div class="board-wrap" id="boardWrap"><div class="board" id="board"></div></div>
     <div class="kpis" id="kpiProcessos" style="display:none;"></div>
     <div class="board-wrap" id="boardProcessosWrap" style="display:none;"><div class="board" id="boardProcessos"></div></div>
+    <div class="dashboard-wrap" id="prazosWrap" style="display:none;"></div>
     <div class="dashboard-wrap" id="dashboardWrap" style="display:none;"></div>
     <div class="note">Dados salvos na nuvem (Supabase) e compartilhados com toda a equipe do escritório em tempo real.</div>
     <div id="modalRoot"></div>
@@ -548,10 +550,12 @@ function setActiveView(view) {
   document.getElementById('boardWrap').style.display = view === 'quadro' ? '' : 'none';
   document.getElementById('boardProcessosWrap').style.display = view === 'processos' ? '' : 'none';
   document.getElementById('kpiProcessos').style.display = view === 'processos' ? '' : 'none';
-  document.getElementById('kpiStrip').style.display = view === 'processos' ? 'none' : '';
+  document.getElementById('kpiStrip').style.display = (view === 'processos' || view === 'prazos') ? 'none' : '';
+  document.getElementById('prazosWrap').style.display = view === 'prazos' ? '' : 'none';
   document.getElementById('dashboardWrap').style.display = view === 'dashboard' ? '' : 'none';
   if (view === 'dashboard') renderDashboard();
   if (view === 'processos') renderBoardProcessos();
+  if (view === 'prazos') renderPrazos();
 }
 
 function subscribeRealtime() {
@@ -1409,6 +1413,7 @@ function openModal(id) {
             ${(!isNew && lead.dataCriacao) ? `<div class="form-row full"><small>📅 Lead criado em ${new Date(lead.dataCriacao).toLocaleDateString('pt-BR')} às ${new Date(lead.dataCriacao).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}${lead.criadoPor ? ' · por ' + escapeHtml(lead.criadoPor) : ''}</small></div>` : ''}
             ${lead.driveFolderUrl ? `<div class="form-row full"><a href="${escapeHtml(lead.driveFolderUrl)}" target="_blank" rel="noopener" class="btn btn-ghost" style="display:inline-block; text-decoration:none;">📁 Abrir pasta no Google Drive</a></div>` : ''}
             ${(lead.stage === 'Sem viabilidade jurídica' && lead.driveFolderUrl) ? `<div class="form-row full"><button type="button" class="btn btn-ghost" id="btnApagarPasta">🗑️ Apagar pasta do Drive (o lead continua no CRM)</button></div>` : ''}
+            ${lead.driveFolderUrl ? `<div class="form-row full"><label>Nome da pasta no Drive</label><div style="display:flex; gap:8px; flex-wrap:wrap;"><input id="f_driveNome" autocomplete="off" style="flex:1; min-width:220px;" value="${escapeHtml(lead.nome)}" placeholder="Ex.: Priscila Neves André"><button type="button" class="btn btn-ghost" id="btnRenomearPasta">✏️ Renomear pasta</button></div><small>Renomeia a pasta do cliente no Google Drive (o nome do lead no CRM não muda).</small></div>` : ''}
             ${lead.driveFolderStatus ? `<div class="form-row full"><small>📁 Pasta do Drive: ${escapeHtml(lead.driveFolderStatus)}</small></div>` : ''}
 
             <div class="form-row full" style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px;">
@@ -1695,6 +1700,22 @@ function openModal(id) {
   document.getElementById('closeX').addEventListener('click', close);
   document.getElementById('btnCancel').addEventListener('click', close);
   document.getElementById('overlay').addEventListener('click', (e) => { if (e.target.id === 'overlay') close(); });
+
+  const btnRenomear = document.getElementById('btnRenomearPasta');
+  if (btnRenomear) btnRenomear.addEventListener('click', async () => {
+    const novoNome = (document.getElementById('f_driveNome').value || '').trim();
+    if (!novoNome) { alert('Digite o novo nome da pasta.'); return; }
+    if (!confirm('Renomear a pasta do Drive para:\n\n' + novoNome + '\n\nConfirmar?')) return;
+    btnRenomear.disabled = true; btnRenomear.textContent = 'Renomeando...';
+    try {
+      const m = (lead.driveFolderUrl || '').match(/folders\/([A-Za-z0-9_-]+)/);
+      const r = await fetch(SUPABASE_URL + '/functions/v1/rename-client-drive-folder', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON_KEY }, body: JSON.stringify({ lead_id: lead.id, folder_id: m ? m[1] : null, novo_nome: novoNome }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || r.status);
+      alert('Pasta renomeada no Drive.');
+      btnRenomear.disabled = false; btnRenomear.textContent = '✏️ Renomear pasta';
+    } catch (e) { alert('Não foi possível renomear a pasta.\n\nErro técnico: ' + e.message); btnRenomear.disabled = false; btnRenomear.textContent = '✏️ Renomear pasta'; }
+  });
 
   const btnApagar = document.getElementById('btnApagarPasta');
   if (btnApagar) btnApagar.addEventListener('click', async () => {
@@ -2692,6 +2713,123 @@ async function exportToPdf() {
 }
 
 /* ---------- inicialização ---------- */
+// ---------- PRAZOS (DJEN) ----------
+const DJEN_API = 'https://comunicaapi.pje.jus.br/api/v1/comunicacao';
+const DJEN_CACHE_KEY = 'crm_djen_v1';
+let prazosBusy = false, prazosFiltro = 'todos', prazosMsg = '';
+function djenCacheLoad() { try { return JSON.parse(localStorage.getItem(DJEN_CACHE_KEY)) || {}; } catch (e) { return {}; } }
+function djenCacheSave(c) { try { localStorage.setItem(DJEN_CACHE_KEY, JSON.stringify(c)); } catch (e) {} }
+function soDigitos(n) { return (n || '').replace(/\D/g, ''); }
+
+function addDiasUteis(iso, n) {
+  const d = new Date(iso + 'T12:00:00');
+  while (n > 0) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w !== 0 && w !== 6) n--; }
+  return d.toISOString().slice(0, 10);
+}
+// Procura "prazo de N dias" no teor. Retorna N ou null.
+function extrairPrazoDias(texto) {
+  const t = (texto || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const m = t.match(/prazo\s+(?:legal\s+|comum\s+|sucessivo\s+)?(?:de\s+|em\s+)?(?:\w+\s+)?\(?(\d{1,3})\)?\s*(?:\([^)]*\)\s*)?dias?/i)
+         || t.match(/(?:no|em)\s+(?:o\s+)?prazo\s+de\s+(\d{1,3})\s*(?:dias?|d)/i)
+         || t.match(/\b(\d{1,3})\s*\([^)]*\)\s*dias?\b/i);
+  const n = m ? parseInt(m[1], 10) : null;
+  return n && n <= 180 ? n : null;
+}
+function fmtData(iso) { return iso ? iso.split('-').reverse().join('/') : '—'; }
+
+async function djenBuscarProcesso(numero) {
+  const dig = soDigitos(numero);
+  const url = DJEN_API + '?numeroProcesso=' + dig + '&itensPorPagina=100';
+  let j;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('DJEN respondeu ' + r.status);
+    j = await r.json();
+  } catch (e) {
+    // bloqueio de CORS/rede no navegador: tenta pela Edge Function do Supabase
+    const r2 = await fetch(SUPABASE_URL + '/functions/v1/djen-prazos', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token, 'apikey': SUPABASE_ANON_KEY }, body: JSON.stringify({ numero_processo: dig }) });
+    if (!r2.ok) throw new Error('Não foi possível consultar o DJEN (' + (e.message || e) + '; função: ' + r2.status + ')');
+    j = await r2.json();
+  }
+  return (j.items || []).map(it => ({
+    id: it.id, data: (it.data_disponibilizacao || '').slice(0, 10), tribunal: it.siglaTribunal || '', orgao: it.nomeOrgao || '',
+    tipo: it.tipoComunicacao || it.tipoDocumento || '', classe: it.nomeClasse || '', link: it.link || '', texto: it.texto || '',
+  }));
+}
+
+async function buscarPrazosDjen() {
+  if (prazosBusy) return;
+  prazosBusy = true;
+  const cache = djenCacheLoad();
+  const lista = processos.filter(procAtivo).filter(p => soDigitos(p.numero).length === 20);
+  let ok = 0, falhas = 0;
+  for (let i = 0; i < lista.length; i++) {
+    prazosMsg = `Consultando DJEN… ${i + 1} de ${lista.length}`;
+    renderPrazos();
+    try { cache[soDigitos(lista[i].numero)] = { buscadoEm: new Date().toISOString(), itens: await djenBuscarProcesso(lista[i].numero) }; ok++; }
+    catch (e) { falhas++; console.error(e); prazosMsg = 'Erro: ' + e.message; }
+    djenCacheSave(cache);
+    await new Promise(r => setTimeout(r, 400));
+  }
+  prazosMsg = `Busca concluída: ${ok} processo(s) consultado(s)${falhas ? ', ' + falhas + ' com erro (veja o console)' : ''}.`;
+  prazosBusy = false;
+  renderPrazos();
+}
+
+function renderPrazos() {
+  const el = document.getElementById('prazosWrap');
+  if (!el) return;
+  const cache = djenCacheLoad();
+  const hoje = new Date().toISOString().slice(0, 10);
+  const semNumero = processos.filter(procAtivo).filter(p => soDigitos(p.numero).length !== 20);
+  let linhas = [];
+  processos.forEach(p => {
+    const c = cache[soDigitos(p.numero)];
+    if (!c) return;
+    const lead = leads.find(l => l.id === p.leadId) || {};
+    c.itens.forEach(it => {
+      const dias = extrairPrazoDias(it.texto);
+      const venc = (dias && it.data) ? addDiasUteis(it.data, 1 + dias) : '';
+      linhas.push({ p, lead, it, dias, venc });
+    });
+  });
+  const total = linhas.length;
+  if (prazosFiltro === 'prazo') linhas = linhas.filter(l => l.venc);
+  if (prazosFiltro === 'abertos') linhas = linhas.filter(l => l.venc && l.venc >= hoje);
+  linhas.sort((a, b) => (a.venc && b.venc) ? a.venc.localeCompare(b.venc) : a.venc ? -1 : b.venc ? 1 : (b.it.data || '').localeCompare(a.it.data || ''));
+  const corVenc = v => !v ? '' : v < hoje ? 'color:#8a8a8a;' : v <= addDiasUteis(hoje, 3) ? 'color:var(--red); font-weight:700;' : v <= addDiasUteis(hoje, 7) ? 'color:#b36b00; font-weight:700;' : 'color:var(--green); font-weight:700;';
+  const abertos = linhas.filter(l => l.venc && l.venc >= hoje).length;
+  const filtros = [['todos', 'Todas as publicações'], ['prazo', 'Com prazo identificado'], ['abertos', 'Prazos em aberto']];
+  el.innerHTML = `
+    <div style="padding:18px 26px;">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+        <h2 style="margin:0; font-size:18px; color:var(--navy);">⏰ Prazos — publicações no DJEN</h2>
+        <button class="btn btn-gold" id="btnBuscarDjen" ${prazosBusy ? 'disabled' : ''}>🔄 Buscar prazos no DJEN</button>
+        <select id="prazosFiltro">${filtros.map(f => `<option value="${f[0]}" ${f[0] === prazosFiltro ? 'selected' : ''}>${f[1]}</option>`).join('')}</select>
+        <span style="font-size:12px; color:#6b6459;">${escapeHtml(prazosMsg)}</span>
+      </div>
+      <div style="font-size:12px; color:#6b6459; margin-bottom:10px;">
+        ${total} publicação(ões) · ${abertos} prazo(s) em aberto. O vencimento é uma <b>estimativa</b> (dias úteis a partir da disponibilização, sem considerar feriados e suspensões) calculada pelo "prazo de N dias" encontrado no teor — sempre confira no processo.
+        ${semNumero.length ? `<br>⚠️ ${semNumero.length} processo(s) ativo(s) sem número CNJ válido (20 dígitos) não foram consultados.` : ''}
+      </div>
+      ${linhas.length ? `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:12.5px; background:var(--white);">
+        <thead><tr style="background:var(--navy); color:white; text-align:left;">${['Cliente', 'Processo', 'Órgão', 'Tipo', 'Disponibilizada', 'Prazo', 'Vence em (est.)', 'Teor'].map(h => `<th style="padding:8px 10px;">${h}</th>`).join('')}</tr></thead>
+        <tbody>${linhas.map(l => `<tr style="border-bottom:1px solid var(--border); vertical-align:top;">
+          <td style="padding:8px 10px;"><b>${escapeHtml(l.lead.nome || '—')}</b></td>
+          <td style="padding:8px 10px; white-space:nowrap;">${escapeHtml(l.p.numero)}</td>
+          <td style="padding:8px 10px;">${escapeHtml([l.it.tribunal, l.it.orgao].filter(Boolean).join(' · '))}</td>
+          <td style="padding:8px 10px;">${escapeHtml(l.it.tipo)}</td>
+          <td style="padding:8px 10px; white-space:nowrap;">${fmtData(l.it.data)}</td>
+          <td style="padding:8px 10px;">${l.dias ? l.dias + ' dias' : '—'}</td>
+          <td style="padding:8px 10px; white-space:nowrap; ${corVenc(l.venc)}">${l.venc ? fmtData(l.venc) : '—'}</td>
+          <td style="padding:8px 10px; max-width:420px;"><details><summary style="cursor:pointer;">Ver teor</summary><div style="white-space:pre-wrap; margin-top:6px;">${escapeHtml((l.it.texto || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())}</div>${l.it.link ? `<a href="${escapeHtml(l.it.link)}" target="_blank" rel="noopener">Abrir no DJEN</a>` : ''}</details></td>
+        </tr>`).join('')}</tbody></table></div>`
+      : `<div class="empty-state"><div class="icon">⏰</div><h2>Nenhuma publicação para mostrar</h2><p>Clique em "Buscar prazos no DJEN" para consultar os processos ativos cadastrados no CRM.</p></div>`}
+    </div>`;
+  document.getElementById('btnBuscarDjen').addEventListener('click', buscarPrazosDjen);
+  document.getElementById('prazosFiltro').addEventListener('change', (e) => { prazosFiltro = e.target.value; renderPrazos(); });
+}
+
 async function init() {
   if (!SUPABASE_URL || SUPABASE_URL.startsWith('COLE_AQUI') || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.startsWith('COLE_AQUI')) {
     renderSetupNeeded();
