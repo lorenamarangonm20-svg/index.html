@@ -2718,6 +2718,10 @@ const DJEN_API = 'https://comunicaapi.pje.jus.br/api/v1/comunicacao';
 const DJEN_CACHE_KEY = 'crm_djen_v1';
 let prazosBusy = false, prazosFiltro = 'todos', prazosMsg = '', prazosCliente = '';
 function djenCacheLoad() { try { return JSON.parse(localStorage.getItem(DJEN_CACHE_KEY)) || {}; } catch (e) { return {}; } }
+const DJEN_LIDOS_KEY = 'crm_djen_lidos_v1';
+function lidosLoad() { try { return new Set(JSON.parse(localStorage.getItem(DJEN_LIDOS_KEY)) || []); } catch (e) { return new Set(); } }
+function lidosSave(set) { try { localStorage.setItem(DJEN_LIDOS_KEY, JSON.stringify([...set])); } catch (e) {} }
+function chavePublicacao(l) { return String(l.it.id || (soDigitos(l.p.numero) + '|' + l.it.data + '|' + l.it.tipo)); }
 function djenCacheSave(c) { try { localStorage.setItem(DJEN_CACHE_KEY, JSON.stringify(c)); } catch (e) {} }
 function soDigitos(n) { return (n || '').replace(/\D/g, ''); }
 
@@ -2781,6 +2785,7 @@ function renderPrazos() {
   if (!el) return;
   const cache = djenCacheLoad();
   const hoje = new Date().toISOString().slice(0, 10);
+  const lidos = lidosLoad();
   const semNumero = processos.filter(procAtivo).filter(p => soDigitos(p.numero).length !== 20);
   let linhas = [];
   processos.forEach(p => {
@@ -2829,7 +2834,7 @@ function renderPrazos() {
         ${procsCliente.map(x => `<div style="margin-top:4px;">⚖️ ${escapeHtml(x.numero)} · ${escapeHtml([x.tribunal, x.orgao].filter(Boolean).join(' · ') || 'tribunal não informado')}</div>`).join('')}
       </div>` : ''}
       ${linhas.length ? `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:12.5px; background:var(--white);">
-        <thead><tr style="background:var(--navy); color:white; text-align:left;">${['Cliente', 'Processo / Tribunal', 'Órgão', 'Tipo', 'Disponibilizada', 'Prazo', 'Vence em (est.)', 'Situação', 'Teor'].map(h => `<th style="padding:8px 10px;">${h}</th>`).join('')}</tr></thead>
+        <thead><tr style="background:var(--navy); color:white; text-align:left;">${['Cliente', 'Processo / Tribunal', 'Órgão', 'Tipo', 'Disponibilizada', 'Prazo', 'Vence em (est.)', 'Situação', 'Teor', 'Li?'].map(h => `<th style="padding:8px 10px;">${h}</th>`).join('')}</tr></thead>
         <tbody>${linhas.map(l => `<tr style="border-bottom:1px solid var(--border); vertical-align:top;">
           <td style="padding:8px 10px;"><b>${escapeHtml(l.lead.nome || '—')}</b></td>
           <td style="padding:8px 10px; white-space:nowrap;">${escapeHtml(l.p.numero)}<div style="font-size:11px; color:#6b6459;">${escapeHtml(l.it.tribunal || '—')}</div></td>
@@ -2840,10 +2845,16 @@ function renderPrazos() {
           <td style="padding:8px 10px; white-space:nowrap; ${corVenc(l.venc)}">${l.venc ? fmtData(l.venc) : '—'}</td>
           <td style="padding:8px 10px; white-space:nowrap;">${!l.venc ? 'Sem prazo' : l.venc < hoje ? 'Vencido' : 'Em aberto'}</td>
           <td style="padding:8px 10px; max-width:420px;"><details><summary style="cursor:pointer;">Ver teor</summary><div style="white-space:pre-wrap; margin-top:6px;">${escapeHtml((l.it.texto || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())}</div>${l.it.link ? `<a href="${escapeHtml(l.it.link)}" target="_blank" rel="noopener">Abrir no DJEN</a>` : ''}</details></td>
+          <td style="padding:8px 10px; text-align:center;"><input type="checkbox" class="chkLido" data-k="${escapeHtml(chavePublicacao(l))}" ${lidos.has(chavePublicacao(l)) ? 'checked' : ''} title="Marcar como lido" style="width:17px; height:17px; cursor:pointer;"></td>
         </tr>`).join('')}</tbody></table></div>`
       : `<div class="empty-state"><div class="icon">⏰</div><h2>Nenhuma publicação para mostrar</h2><p>Clique em "Buscar prazos no DJEN" para consultar os processos ativos cadastrados no CRM.</p></div>`}
     </div>`;
   document.getElementById('btnBuscarDjen').addEventListener('click', buscarPrazosDjen);
+  el.querySelectorAll('.chkLido').forEach(c => c.addEventListener('change', () => {
+    const set = lidosLoad();
+    if (c.checked) set.add(c.dataset.k); else set.delete(c.dataset.k);
+    lidosSave(set);
+  }));
   document.getElementById('prazosCliente').addEventListener('change', (e) => { prazosCliente = e.target.value; renderPrazos(); });
   document.getElementById('prazosFiltro').addEventListener('change', (e) => { prazosFiltro = e.target.value; renderPrazos(); });
 }
