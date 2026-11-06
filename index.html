@@ -2845,6 +2845,15 @@ function renderPrazos() {
         ${total} publicação(ões) · ${abertos} prazo(s) em aberto. O vencimento é uma <b>estimativa</b> (dias úteis a partir da disponibilização, sem considerar feriados e suspensões) calculada pelo "prazo de N dias" encontrado no teor — sempre confira no processo.
         ${semNumero.length ? `<br>⚠️ ${semNumero.length} processo(s) ativo(s) sem número CNJ válido (20 dígitos) não foram consultados.` : ''}
       </div>
+      <details style="margin-bottom:12px; font-size:12.5px;"><summary style="cursor:pointer; color:var(--navy); font-weight:600;">🔎 Situação da consulta de cada processo</summary>
+        <div style="background:var(--white); border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-top:6px;">
+        ${processos.map(p => {
+          const lead = leads.find(l => l.id === p.leadId) || {};
+          const c = cache[soDigitos(p.numero)];
+          const st = !procAtivo(p) ? 'não consultado (lead encerrado ou sem viabilidade)' : problemaNumeroCnj(p.numero) ? 'não consultado (número com problema)' : prazosErros[p.id] ? 'ERRO: ' + prazosErros[p.id] : !c ? 'ainda não consultado — clique em Buscar' : `consultado em ${new Date(c.buscadoEm).toLocaleString('pt-BR')}: ${c.itens.length} publicação(ões) encontrada(s)`;
+          return `<div style="padding:3px 0; border-bottom:1px solid var(--border);"><b>${escapeHtml(lead.nome || '(sem nome)')}</b> — ${escapeHtml(p.numero || '(sem número)')} — ${escapeHtml(st)}</div>`;
+        }).join('') || 'Nenhum processo cadastrado.'}
+        </div></details>
       ${problemas.length ? `<div style="background:var(--red-light, #F7E7E7); border:1px solid var(--red, #A13A3A); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12.5px;">
         <b>⚠️ ${problemas.length} processo(s) com número a corrigir:</b>
         ${problemas.map(x => `<div style="margin-top:4px;"><b>${escapeHtml(x.lead.nome || '(sem nome)')}</b> — ${escapeHtml(x.p.numero || '(sem número)')} — ${escapeHtml(x.motivo)}</div>`).join('')}
