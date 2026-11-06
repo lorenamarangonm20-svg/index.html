@@ -2739,6 +2739,17 @@ function extrairPrazoDias(texto) {
   const n = m ? parseInt(m[1], 10) : null;
   return n && n <= 180 ? n : null;
 }
+// Valida o número CNJ (20 dígitos) e o dígito verificador (módulo 97). Retorna '' se ok, ou o motivo.
+function problemaNumeroCnj(numero) {
+  const d = soDigitos(numero);
+  if (!d) return 'número em branco';
+  if (d.length !== 20) return `tem ${d.length} dígitos (o número CNJ tem 20)`;
+  const dv = d.slice(7, 9);
+  const base = BigInt(d.slice(0, 7) + d.slice(9) + '00');
+  const esperado = String(98n - (base % 97n)).padStart(2, '0');
+  return dv === esperado ? '' : `dígito verificador não confere (deveria ser ${esperado}, está ${dv}) — provável erro de digitação`;
+}
+let prazosErros = {};
 function fmtData(iso) { return iso ? iso.split('-').reverse().join('/') : '—'; }
 
 async function djenBuscarProcesso(numero) {
@@ -2770,8 +2781,9 @@ async function buscarPrazosDjen() {
   for (let i = 0; i < lista.length; i++) {
     prazosMsg = `Consultando DJEN… ${i + 1} de ${lista.length}`;
     renderPrazos();
+    delete prazosErros[lista[i].id];
     try { cache[soDigitos(lista[i].numero)] = { buscadoEm: new Date().toISOString(), itens: await djenBuscarProcesso(lista[i].numero) }; ok++; }
-    catch (e) { falhas++; console.error(e); prazosMsg = 'Erro: ' + e.message; }
+    catch (e) { falhas++; console.error(e); prazosErros[lista[i].id] = e.message; prazosMsg = 'Erro: ' + e.message; }
     djenCacheSave(cache);
     await new Promise(r => setTimeout(r, 400));
   }
@@ -2787,6 +2799,10 @@ function renderPrazos() {
   const hoje = new Date().toISOString().slice(0, 10);
   const lidos = lidosLoad();
   const semNumero = processos.filter(procAtivo).filter(p => soDigitos(p.numero).length !== 20);
+  const problemas = processos.filter(procAtivo).map(p => {
+    const motivo = problemaNumeroCnj(p.numero) || (prazosErros[p.id] ? 'a consulta ao DJEN falhou: ' + prazosErros[p.id] : '');
+    return motivo ? { p, lead: leads.find(l => l.id === p.leadId) || {}, motivo } : null;
+  }).filter(Boolean);
   let linhas = [];
   processos.forEach(p => {
     const c = cache[soDigitos(p.numero)];
@@ -2829,6 +2845,11 @@ function renderPrazos() {
         ${total} publicação(ões) · ${abertos} prazo(s) em aberto. O vencimento é uma <b>estimativa</b> (dias úteis a partir da disponibilização, sem considerar feriados e suspensões) calculada pelo "prazo de N dias" encontrado no teor — sempre confira no processo.
         ${semNumero.length ? `<br>⚠️ ${semNumero.length} processo(s) ativo(s) sem número CNJ válido (20 dígitos) não foram consultados.` : ''}
       </div>
+      ${problemas.length ? `<div style="background:var(--red-light, #F7E7E7); border:1px solid var(--red, #A13A3A); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12.5px;">
+        <b>⚠️ ${problemas.length} processo(s) com número a corrigir:</b>
+        ${problemas.map(x => `<div style="margin-top:4px;"><b>${escapeHtml(x.lead.nome || '(sem nome)')}</b> — ${escapeHtml(x.p.numero || '(sem número)')} — ${escapeHtml(x.motivo)}</div>`).join('')}
+        <div style="margin-top:6px; color:#6b6459;">Abra o card do cliente, corrija o número em "Processos" e busque de novo.</div>
+      </div>` : ''}
       ${prazosCliente ? `<div style="background:var(--white); border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:13px;">
         <b style="color:var(--navy);">${escapeHtml(nomeCliente)}</b> — histórico de publicações e prazos (mais recente primeiro)
         ${procsCliente.map(x => `<div style="margin-top:4px;">⚖️ ${escapeHtml(x.numero)} · ${escapeHtml([x.tribunal, x.orgao].filter(Boolean).join(' · ') || 'tribunal não informado')}</div>`).join('')}
